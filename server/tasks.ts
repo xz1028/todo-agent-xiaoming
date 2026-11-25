@@ -12,9 +12,14 @@ const attributes = {
   parentId: z.string().optional(),
 };
 
-const createTaskSchema = z.strictObject({ title: titleField, ...attributes });
+const compatibleWorkload = (input: { effort?: string; workload?: string }) =>
+  input.effort === undefined || input.workload === undefined || input.effort === input.workload;
+const createTaskSchema = z
+  .strictObject({ title: titleField, ...attributes })
+  .refine(compatibleWorkload);
 const updateTaskSchema = z
   .strictObject({ title: titleField.optional(), done: z.boolean().optional(), ...attributes })
+  .refine(compatibleWorkload)
   .refine((changes) => Object.keys(changes).length > 0);
 
 type CreateInput = z.infer<typeof createTaskSchema>;

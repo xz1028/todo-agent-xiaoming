@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { z } from "zod";
 import { summaryOf } from "./agent-tools.ts";
-import type { Task, TaskStore } from "./task-store.ts";
+import { tasksAffectedByDeletion, type Task, type TaskStore } from "./task-store.ts";
 
 const pendingSchema = z
   .object({
@@ -43,10 +43,7 @@ export function createDeletionConfirmation(tasks: TaskStore, now: () => Date, fi
   }
 
   function affected(ids: string[]): Task[] {
-    const selected = new Set(ids);
-    return tasks
-      .list()
-      .filter((task) => selected.has(task.id) || selected.has(task.parentId ?? ""));
+    return tasksAffectedByDeletion(tasks.list(), ids);
   }
 
   function deleted(ids: string[]): string {

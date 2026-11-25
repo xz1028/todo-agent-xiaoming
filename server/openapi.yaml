@@ -34,7 +34,7 @@ paths:
                 priority: { $ref: "#/components/schemas/Priority" }
                 workload: { $ref: "#/components/schemas/Workload" }
                 effort: { $ref: "#/components/schemas/Effort" }
-                parentId: { type: string, description: 父任务 id }
+                parentId: { type: string, description: 已存在的顶层父任务 id；仅支持父子两层 }
       responses:
         "201":
           description: 新建的任务
@@ -77,7 +77,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteTask
-      summary: 删除一条任务及其子任务
+      summary: 删除一条任务及其全部后代（含历史深层关系）
       responses:
         "204":
           description: 删除成功，响应体为空
@@ -103,7 +103,7 @@ components:
     Effort:
       type: string
       enum: [small, medium, large]
-      description: workload 的输入别名，写入时统一归一化为 workload
+      description: workload 的输入别名，写入时统一归一化为 workload；同时提供时值必须相同
     Task:
       type: object
       required: [id, title, done]

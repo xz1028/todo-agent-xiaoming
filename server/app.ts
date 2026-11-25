@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import express, { type ErrorRequestHandler } from "express";
 import { chatRequestSchema, type ChatMessage } from "../shared/chat.ts";
-import type { TaskStore } from "./task-store.ts";
+import { TaskRelationError, type TaskStore } from "./task-store.ts";
 import { taskRouter } from "./tasks.ts";
 
 interface AppDependencies {
@@ -32,6 +32,9 @@ export function createApp({ reply, tasks }: AppDependencies) {
 }
 
 const handleApiError: ErrorRequestHandler = (error, _req, res, _next) => {
+  if (error instanceof TaskRelationError) {
+    return res.status(400).json({ error: error.message });
+  }
   if (error.type === "entity.parse.failed") {
     return res.status(400).json({ error: "请求需要使用有效的 JSON。" });
   }

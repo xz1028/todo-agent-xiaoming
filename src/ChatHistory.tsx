@@ -20,11 +20,11 @@ function MessageBody({ content }: { content: string }) {
   return (
     <div>
       {lines.map((line, index) => {
-        const className = line.startsWith("📋")
+        const className = /^\s*📋/u.test(line)
           ? "list-heading"
-          : /[✅☑]/.test(line)
+          : /^\s*[✅☑]/u.test(line)
             ? "task-done"
-            : /[⬜☐]/.test(line)
+            : /^\s*[⬜☐]/u.test(line)
               ? "task-pending"
               : "";
         return (

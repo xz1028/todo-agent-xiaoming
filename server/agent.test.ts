@@ -700,3 +700,88 @@ test("删除准备出错后清空旧计划，只执行重新明确登记的范�
   await createAgent({ tasks: store, client }).reply([{ role: "user", content: "删除 B" }]);
   assert.deepEqual(store.list(), [a]);
 });
+
+for (const finishReason of ["length", "content_filter", undefined]) {
+  test(`模型以 ${finishReason} 结束时不提交已准备的删除`, async (t) => {
+    const store = await newStore(t);
+    const task = store.create("买牛奶");
+    let count = 0;
+    const client: ChatClient = {
+      chat: {
+        completions: {
+          async create() {
+            count += 1;
+            return {
+              choices: [
+                {
+                  index: 0,
+                  message:
+                    count === 1
+                      ? toolCall("prepare", "prepare_deletion", JSON.stringify({ ids: [task.id] }))
+                      : finalText("删除前还需要确认"),
+                  finish_reason: count === 1 ? "tool_calls" : finishReason,
+                },
+              ],
+            };
+          },
+        },
+      },
+    };
+    const answer = await createAgent({ tasks: store, client }).reply([
+      { role: "user", content: "删除买牛奶" },
+    ]);
+    assert.deepEqual(store.list(), [task]);
+    assert.match(answer, /未完整|未完成/u);
+    assert.doesNotMatch(answer, /已删除/u);
+  });
+}
+
+test("截断的工具消息不能执行其中的写入", async (t) => {
+  const store = await newStore(t);
+  const client: ChatClient = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [
+              {
+                index: 0,
+                finish_reason: "length",
+                message: toolCall("add", "add_tasks", '{"titles":["不应创建"]}'),
+              },
+            ],
+          };
+        },
+      },
+    },
+  };
+  await createAgent({ tasks: store, client }).reply([{ role: "user", content: "记一条任务" }]);
+  assert.deepEqual(store.list(), []);
+});
+
+test("删除成功时仍告知同轮新增失败", async (t) => {
+  const store = await newStore(t);
+  const task = store.create("买牛奶");
+  const client = scriptedClient(
+    [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          ...toolCall("prepare", "prepare_deletion", JSON.stringify({ ids: [task.id] }))
+            .tool_calls!,
+          ...toolCall("add", "add_tasks", '{"titles":["交报告"],"dueDate":"2026-02-30"}')
+            .tool_calls!,
+        ],
+      },
+      finalText("已准备删除，但添加失败，日期无效。"),
+    ],
+    store,
+  );
+  const answer = await createAgent({ tasks: store, client }).reply([
+    { role: "user", content: "删除买牛奶，再添加交报告，2026-02-30到期" },
+  ]);
+  assert.deepEqual(store.list(), []);
+  assert.match(answer, /已删除 1/u);
+  assert.match(answer, /添加失败.*日期/u);
+});

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Task, TaskChanges, TaskStore } from "./task-store.ts";
+import { TaskRelationError, type Task, type TaskChanges, type TaskStore } from "./task-store.ts";
 
 /** OpenAI function calling 所需的工具定义（最小接口，不依赖具体 SDK 类型）。 */
 export const AGENT_TOOLS = [
@@ -145,6 +145,9 @@ function requireId(args: JsonObject): { id?: string; error?: string } {
 /** 从工具参数里提取可选扩展字段；effort 是 workload 的输入别名。 */
 function attributes(args: JsonObject): { changes: TaskChanges; error?: string } {
   const changes: TaskChanges = {};
+  if (args.effort !== undefined && args.workload !== undefined && args.effort !== args.workload) {
+    return { changes, error: "effort 与 workload 表示同一工作量，不能提供不同的值。" };
+  }
   if (args.dueDate !== undefined) {
     if (typeof args.dueDate !== "string" || !z.iso.date().safeParse(args.dueDate).success) {
       return { changes, error: "到期日必须是 YYYY-MM-DD 格式的有效日期。" };
@@ -200,12 +203,26 @@ export function summaryOf(tasks: Task[], now: () => Date = () => new Date()): st
   return `共 ${tasks.length} 项，未完成 ${pending.length} 项。${lines.length ? `\n${lines.join("\n")}` : ""}`;
 }
 
-/** 执行一个工具调用；任何失败都以结构化 JSON 返回，绝不抛异常给 agent 循环。 */
+/** 参数与关系校验失败回填结构化 JSON；存储等异常由 agent 统一兜底。 */
 export function executeTool(
   name: string,
   argsJson: string,
   store: TaskStore,
   now: () => Date = () => new Date(),
+): string {
+  try {
+    return executeValidatedTool(name, argsJson, store, now);
+  } catch (cause) {
+    if (cause instanceof TaskRelationError) return error(cause.message);
+    throw cause;
+  }
+}
+
+function executeValidatedTool(
+  name: string,
+  argsJson: string,
+  store: TaskStore,
+  now: () => Date,
 ): string {
   let raw: unknown;
   try {

@@ -22,6 +22,41 @@ export interface Task {
 
 export type TaskChanges = Partial<Omit<Task, "id">>;
 
+export class TaskRelationError extends Error {}
+
+/** 兼容历史深层关系；迭代遍历并去重，循环关系也能安全终止。 */
+export function tasksAffectedByDeletion(tasks: Task[], ids: string[]): Task[] {
+  const selected = new Set(ids);
+  const children = new Map<string, string[]>();
+  for (const task of tasks) {
+    if (task.parentId !== undefined) {
+      const siblings = children.get(task.parentId) ?? [];
+      siblings.push(task.id);
+      children.set(task.parentId, siblings);
+    }
+  }
+  const queue = [...selected];
+  for (let index = 0; index < queue.length; index += 1) {
+    for (const id of children.get(queue[index]) ?? []) {
+      if (!selected.has(id)) {
+        selected.add(id);
+        queue.push(id);
+      }
+    }
+  }
+  return tasks.filter((task) => selected.has(task.id));
+}
+
+function validateParent(tasks: Task[], id: string, parentId: string | undefined) {
+  if (parentId === undefined) return;
+  if (id === parentId) throw new TaskRelationError("任务不能把自己设为父任务。");
+  const parent = tasks.find((task) => task.id === parentId);
+  if (!parent) throw new TaskRelationError("父任务不存在，请先查看清单确认父任务。");
+  if (parent.parentId !== undefined || tasks.some((task) => task.parentId === id)) {
+    throw new TaskRelationError("暂不支持更深层级的子任务；含子任务的任务不能再设为子任务。");
+  }
+}
+
 /** zod 只校验既有三字段；looseObject 保留历史数据里的额外字段（含旧版自定义字段）。 */
 const storedTask = z.looseObject({ id: z.string(), title: z.string(), done: z.boolean() });
 const taskList = z.array(storedTask) as z.ZodType<Task[]>;
@@ -57,11 +92,9 @@ export function createJsonTaskStore(filename: string): TaskStore {
   }
 
   function removeMany(ids: string[]): number {
-    const selected = new Set(ids);
     const tasks = list();
-    const remaining = tasks.filter(
-      (task) => !selected.has(task.id) && !selected.has(task.parentId ?? ""),
-    );
+    const selected = new Set(tasksAffectedByDeletion(tasks, ids).map((task) => task.id));
+    const remaining = tasks.filter((task) => !selected.has(task.id));
     const count = tasks.length - remaining.length;
     if (count) save(remaining);
     return count;
@@ -73,7 +106,9 @@ export function createJsonTaskStore(filename: string): TaskStore {
 
     create(title, attrs = {}) {
       const task: Task = { id: randomUUID(), title, done: false, ...compact(attrs) };
-      save([...list(), task]);
+      const tasks = list();
+      validateParent(tasks, task.id, task.parentId);
+      save([...tasks, task]);
       return task;
     },
 
@@ -82,6 +117,7 @@ export function createJsonTaskStore(filename: string): TaskStore {
       const task = tasks.find((item) => item.id === id);
       if (!task) return undefined;
 
+      validateParent(tasks, id, changes.parentId);
       Object.assign(task, compact(changes));
       save(tasks);
       return task;

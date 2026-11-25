@@ -98,7 +98,7 @@ export function createAgent(deps: AgentDeps): Agent {
       },
       { signal: AbortSignal.timeout(20_000), maxRetries: 0 },
     );
-    return completion.choices[0]?.message;
+    return completion.choices[0];
   }
 
   return {
@@ -109,14 +109,20 @@ export function createAgent(deps: AgentDeps): Agent {
       ];
 
       const deletionIds = new Set<string>();
+      const operationErrors = new Set<string>();
       let deletionError: string | undefined;
       try {
         const confirmation = deletionConfirmation.respond(messages.at(-1)?.content ?? "");
         if (confirmation !== undefined) return confirmation;
 
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-          const message = await callModel(conversation);
+          const completion = await callModel(conversation);
+          const message = completion?.message;
           if (!message) return FALLBACK;
+          const expectedFinish = message.tool_calls?.length ? "tool_calls" : "stop";
+          if (completion.finish_reason !== expectedFinish) {
+            return "模型回复未完整结束，本轮未执行删除。请查看清单核对其他操作的结果后再试。";
+          }
 
           if (message.tool_calls?.length) {
             conversation.push({
@@ -132,14 +138,14 @@ export function createAgent(deps: AgentDeps): Agent {
                 console.error("工具执行异常：", toolError);
                 output = JSON.stringify({ ok: false, error: "工具执行失败，请重试。" });
               }
+              const result = JSON.parse(output) as {
+                ok: boolean;
+                error?: string;
+                deletionIds?: string[];
+              };
               if (
                 ["prepare_deletion", "delete_task", "delete_tasks"].includes(call.function.name)
               ) {
-                const result = JSON.parse(output) as {
-                  ok: boolean;
-                  error?: string;
-                  deletionIds?: string[];
-                };
                 if (!result.ok) {
                   deletionIds.clear();
                   deletionError = result.error ?? "请重新查看清单后再试。";
@@ -153,6 +159,8 @@ export function createAgent(deps: AgentDeps): Agent {
                   deletionError = undefined;
                   for (const id of result.deletionIds ?? []) deletionIds.add(id);
                 }
+              } else if (!result.ok) {
+                operationErrors.add(result.error ?? "部分操作未成功，请核对清单。");
               }
               conversation.push({ role: "tool", tool_call_id: call.id, content: output });
             }
@@ -160,7 +168,12 @@ export function createAgent(deps: AgentDeps): Agent {
           }
 
           if (deletionError) return "未删除任务：" + deletionError;
-          if (deletionIds.size) return deletionConfirmation.finish([...deletionIds]);
+          if (deletionIds.size) {
+            const result = deletionConfirmation.finish([...deletionIds]);
+            return operationErrors.size
+              ? `${result}\n本轮其他操作曾失败：${[...operationErrors].join("；")}\n如已重试，请以当前清单为准。`
+              : result;
+          }
           const text = (message.content ?? "").trim();
           if (/确认删除 [a-f0-9-]{36}/u.test(text)) {
             // 确认码只能由持久化记录生成；模型生成的文本不能伪装成可执行的确认。
