@@ -2,7 +2,7 @@
 
 一个用中文对话管理待办任务的智能体。通过 OpenAI function calling 工具循环创建、查看、完成、删除和改名任务，任务持久化在本地 JSON 文件中，刷新页面或重启服务后依然保留。
 
-仓库地址：<https://github.com/xz1028/todo-agent>
+仓库地址：<https://github.com/xz1028/todo-agent-xiaoming>
 
 ## 功能特性
 
@@ -19,8 +19,8 @@
 需要 **Node.js 24.12 或更高版本**。
 
 ```sh
-git clone https://github.com/xz1028/todo-agent.git
-cd todo-agent
+git clone https://github.com/xz1028/todo-agent-xiaoming.git
+cd todo-agent-xiaoming
 npm ci
 npm run dev
 ```
