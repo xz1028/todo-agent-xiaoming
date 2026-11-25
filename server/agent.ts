@@ -67,6 +67,8 @@ function systemPrompt(now: () => Date): string {
     "完成任务或删除后，用简短中文说明结果；列出清单时未完成的排在前面，用 ⬜ 表示未完成、✅ 表示已完成，并给出未完成数量。",
     "扩展字段：add_tasks/update_task 可带 priority（high/medium/low）、effort（small/medium/large）、dueDate（YYYY-MM-DD）；「明天」「周五」按今天的日期换算成 YYYY-MM-DD。",
     "「今天要做什么」用 list_tasks 的 dueToday 和 overdue 参数，只返回今天到期和已逾期且未完成的任务。",
+    "查询今天/明天/本周/下周/本月到期任务时，list_tasks 的 period 分别用 today/tomorrow/this_week/next_week/this_month，服务端按上海日期计算，周一到周日为一周。本月为整个日历月。其他明确范围用 dueFrom/dueTo（含两端），不能与 period 混用。范围查询默认排除已完成；明确查询完成项时设置 filter=done。",
+    "展示清单时保留工具 summary 的待处理/已逾期/已完成三组、数量、父子缩进与完成进度；分组按每条任务自身状态，跨组子任务保留父名，不重复计数。",
     "创建子任务必须先 list_tasks 找到父任务 id，再调用 add_tasks 并设置 parentId；绝不能仅回复已添加。删除含子任务的父任务由服务端要求用户确认，cascade=true 不授权删除。若所有子任务都完成，可提示用户把父任务也标记完成。",
   ].join("\n");
 }

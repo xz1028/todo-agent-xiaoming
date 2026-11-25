@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { summaryOf, todayISO } from "./task-view.ts";
+import { summaryOf } from "./task-view.ts";
+import { periods, queryTasks, taskQuerySchema } from "./task-query.ts";
 export { summaryOf } from "./task-view.ts";
 import { TaskRelationError, type Task, type TaskChanges, type TaskStore } from "./task-store.ts";
 
@@ -22,6 +23,17 @@ export const AGENT_TOOLS = [
           overdue: {
             type: "boolean",
             description: "只返回已逾期（到期日早于今天）的未完成任务",
+          },
+          period: {
+            type: "string",
+            enum: periods,
+            description:
+              "今天/明天/本周/下周/本月，日期由服务端按上海时区计算；不能与dueFrom/dueTo并用",
+          },
+          dueFrom: { type: "string", description: "到期日起始 YYYY-MM-DD，含当天" },
+          dueTo: {
+            type: "string",
+            description: "到期日结束 YYYY-MM-DD，含当天；范围查询默认仅未完成",
           },
         },
       },
@@ -209,29 +221,13 @@ function executeValidatedTool(
 
   switch (name) {
     case "list_tasks": {
-      if (raw.filter !== undefined && !["all", "pending", "done"].includes(raw.filter as string)) {
-        return error("filter 只能是 all、pending 或 done。");
-      }
-      for (const flag of ["dueToday", "overdue"] as const) {
-        if (raw[flag] !== undefined && typeof raw[flag] !== "boolean") {
-          return error(`${flag} 必须是布尔值。`);
-        }
-      }
-      const today = todayISO(now);
-      const allTasks = store.list();
-      let tasks = allTasks;
-      if (raw.filter === "pending") tasks = tasks.filter((task) => !task.done);
-      if (raw.filter === "done") tasks = tasks.filter((task) => task.done);
-      if (raw.dueToday || raw.overdue) {
-        tasks = tasks.filter(
-          (task) =>
-            !task.done &&
-            !!task.dueDate &&
-            ((raw.dueToday && task.dueDate === today) || (raw.overdue && task.dueDate < today)),
+      const query = taskQuerySchema.safeParse(raw);
+      if (!query.success)
+        return error(
+          "查询条件无效，请检查状态、日期范围；日历范围 period 不能和 dueFrom/dueTo 并用。",
         );
-      }
-      // 未完成置顶，方便模型与用户一眼看出待处理项。
-      tasks = [...tasks.filter((task) => !task.done), ...tasks.filter((task) => task.done)];
+      const allTasks = store.list();
+      const tasks = queryTasks(allTasks, query.data, now);
       return success({ tasks, summary: summaryOf(tasks, now, allTasks) });
     }
 
