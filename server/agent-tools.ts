@@ -33,7 +33,8 @@ export const AGENT_TOOLS = [
           filter: {
             type: "string",
             enum: ["all", "pending", "done"],
-            description: "all=全部（默认），pending=未完成，done=已完成",
+            description:
+              "all=全部，pending=未完成，done=已完成；无日期条件默认全部，日期范围默认未完成，仅用户明确要求包含完成项时传all",
           },
           dueToday: { type: "boolean", description: "只返回今天到期的未完成任务" },
           overdue: {

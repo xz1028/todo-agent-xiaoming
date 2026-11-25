@@ -20,6 +20,7 @@ paths:
     post:
       operationId: createTask
       summary: 创建一条未完成任务，可附带到期日、优先级、工作量和父任务
+      description: 子任务未指定到期日时复制当时的父日期；新增孩子会重算父完成状态。
       requestBody:
         required: true
         content:
@@ -51,6 +52,7 @@ paths:
     patch:
       operationId: updateTask
       summary: 修改标题、完成状态或扩展属性
+      description: 完成父任务会完成孩子，全孩子完成会完成父任务；撤销子任务会撤销父完成，撤销父任务不改孩子。
       requestBody:
         required: true
         content:
