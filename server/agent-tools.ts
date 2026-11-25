@@ -87,7 +87,8 @@ export const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "complete_task",
-      description: "把一条任务标记为完成或撤销完成。id 必须来自 list_tasks 的结果。",
+      description:
+        "标记完成或撤销完成，id来自list_tasks。完成父任务会完成孩子；全部孩子完成会完成父任务；撤销孩子会撤销父完成；撤销父任务不改孩子。",
       parameters: {
         type: "object",
         properties: {

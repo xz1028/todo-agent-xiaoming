@@ -77,6 +77,19 @@ function compact(changes: TaskChanges): TaskChanges {
   return result;
 }
 
+/** 非空子任务集合决定父状态；visited 兼容历史循环，单次操作只落盘一次。 */
+function syncParents(tasks: Task[], parentId?: string, sourceId?: string) {
+  const visited = new Set(sourceId ? [sourceId] : []);
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = tasks.find((task) => task.id === parentId);
+    if (!parent) break;
+    const children = tasks.filter((task) => task.parentId === parentId);
+    if (children.length) parent.done = children.every((task) => task.done);
+    parentId = parent.parentId;
+  }
+}
+
 export function createJsonTaskStore(filename: string): TaskStore {
   function list(): Task[] {
     if (!existsSync(filename)) return [];
@@ -96,7 +109,13 @@ export function createJsonTaskStore(filename: string): TaskStore {
     const selected = new Set(tasksAffectedByDeletion(tasks, ids).map((task) => task.id));
     const remaining = tasks.filter((task) => !selected.has(task.id));
     const count = tasks.length - remaining.length;
-    if (count) save(remaining);
+    if (count) {
+      const parents = new Set(
+        tasks.filter((task) => selected.has(task.id)).map((task) => task.parentId),
+      );
+      for (const parentId of parents) syncParents(remaining, parentId);
+      save(remaining);
+    }
     return count;
   }
 
@@ -108,7 +127,12 @@ export function createJsonTaskStore(filename: string): TaskStore {
       const task: Task = { id: randomUUID(), title, done: false, ...compact(attrs) };
       const tasks = list();
       validateParent(tasks, task.id, task.parentId);
-      save([...tasks, task]);
+      const parent = tasks.find((item) => item.id === task.parentId);
+      if (task.dueDate === undefined && parent?.dueDate !== undefined)
+        task.dueDate = parent.dueDate;
+      tasks.push(task);
+      syncParents(tasks, task.parentId, task.id);
+      save(tasks);
       return task;
     },
 
@@ -118,7 +142,15 @@ export function createJsonTaskStore(filename: string): TaskStore {
       if (!task) return undefined;
 
       validateParent(tasks, id, changes.parentId);
+      const oldParentId = task.parentId;
       Object.assign(task, compact(changes));
+      if (changes.done === true) {
+        for (const descendant of tasksAffectedByDeletion(tasks, [id])) descendant.done = true;
+      }
+      if (changes.parentId !== undefined && changes.parentId !== oldParentId)
+        syncParents(tasks, oldParentId, id);
+      if (changes.done !== undefined || changes.parentId !== undefined)
+        syncParents(tasks, task.parentId, id);
       save(tasks);
       return task;
     },
