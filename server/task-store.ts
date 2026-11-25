@@ -3,16 +3,42 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { z } from "zod";
 
+export const priorities = ["high", "medium", "low"] as const;
+export const workloads = ["small", "medium", "large"] as const;
+
+export type Priority = (typeof priorities)[number];
+export type Workload = (typeof workloads)[number];
+
+/** 扩展字段全部可选；老数据只有 id/title/done 时完全兼容。 */
+export interface Task {
+  id: string;
+  title: string;
+  done: boolean;
+  dueDate?: string;
+  priority?: Priority;
+  workload?: Workload;
+  parentId?: string;
+}
+
+export type TaskChanges = Partial<Omit<Task, "id">>;
+
+/** zod 只校验既有三字段；looseObject 保留历史数据里的额外字段（含旧版自定义字段）。 */
 const storedTask = z.looseObject({ id: z.string(), title: z.string(), done: z.boolean() });
-const taskList = z.array(storedTask);
-type Task = z.infer<typeof storedTask>;
-type TaskChanges = Partial<Pick<Task, "title" | "done">>;
+const taskList = z.array(storedTask) as z.ZodType<Task[]>;
 
 export interface TaskStore {
   list(): Task[];
-  create(title: string): Task;
+  create(title: string, attrs?: TaskChanges): Task;
   update(id: string, changes: TaskChanges): Task | undefined;
   remove(id: string): boolean;
+}
+
+function compact(changes: TaskChanges): TaskChanges {
+  const result: TaskChanges = {};
+  for (const [key, value] of Object.entries(changes)) {
+    if (value !== undefined) result[key as keyof TaskChanges] = value as never;
+  }
+  return result;
 }
 
 export function createJsonTaskStore(filename: string): TaskStore {
@@ -32,8 +58,8 @@ export function createJsonTaskStore(filename: string): TaskStore {
   return {
     list,
 
-    create(title) {
-      const task = { id: randomUUID(), title, done: false };
+    create(title, attrs = {}) {
+      const task: Task = { id: randomUUID(), title, done: false, ...compact(attrs) };
       save([...list(), task]);
       return task;
     },
@@ -43,14 +69,15 @@ export function createJsonTaskStore(filename: string): TaskStore {
       const task = tasks.find((item) => item.id === id);
       if (!task) return undefined;
 
-      Object.assign(task, changes);
+      Object.assign(task, compact(changes));
       save(tasks);
       return task;
     },
 
     remove(id) {
       const tasks = list();
-      const remaining = tasks.filter((task) => task.id !== id);
+      // 删除父任务时一并移除其子任务，避免留下无法展示的孤儿节点。
+      const remaining = tasks.filter((task) => task.id !== id && task.parentId !== id);
       if (remaining.length === tasks.length) return false;
 
       save(remaining);
