@@ -140,3 +140,22 @@ test("HTTP 与聊天工具共享继承和完成联动，状态变化让旧删除
     [false, false],
   );
 });
+
+test("批量删除子任务的预览保留父名，不扩大确认或实际删除范围", async (t) => {
+  const { store } = await fixture(t);
+  const parent = store.create("保留父任务");
+  const a = store.create("删除A", { parentId: parent.id });
+  const b = store.create("删除B", { parentId: parent.id });
+  const keep = store.create("保留孩子", { parentId: parent.id });
+  const confirmation = createDeletionConfirmation(store, () => new Date());
+  const prompt = confirmation.finish([a.id, b.id]);
+  assert.match(prompt, /父任务：保留父任务/u);
+  assert.doesNotMatch(prompt, /父任务不在清单中/u);
+  assert.match(prompt, /共 2 项/u);
+  const code = prompt.match(/确认删除 ([a-f0-9-]{36})/u)![1];
+  confirmation.respond("确认删除 " + code);
+  assert.deepEqual(
+    store.list().map((task) => task.id),
+    [parent.id, keep.id],
+  );
+});

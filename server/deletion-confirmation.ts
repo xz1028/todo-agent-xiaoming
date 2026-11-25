@@ -67,7 +67,7 @@ export function createDeletionConfirmation(tasks: TaskStore, now: () => Date, fi
       save({ code, ids: unique, snapshot, expiresAt: now().getTime() + 5 * 60_000 });
       return [
         `即将删除以下 ${snapshot.length} 项任务（包含关联子任务），尚未执行：`,
-        summaryOf(snapshot, now),
+        summaryOf(snapshot, now, tasks.list()),
         `请在 5 分钟内回复：确认删除 ${code}`,
         `如需取消，回复：取消删除 ${code}`,
         "新的删除请求会替换这次待确认操作。",
