@@ -66,7 +66,7 @@ paths:
                 priority: { $ref: "#/components/schemas/Priority" }
                 workload: { $ref: "#/components/schemas/Workload" }
                 effort: { $ref: "#/components/schemas/Effort" }
-                parentId: { type: string, nullable: true }
+                parentId: { type: string }
       responses:
         "200":
           description: 更新后的任务
@@ -91,8 +91,9 @@ components:
       maxLength: 200
     DueDate:
       type: string
+      format: date
       pattern: '^\d{4}-\d{2}-\d{2}$'
-      description: 到期日期
+      description: 有效的日历日期，校验月份、天数和闰年
     Priority:
       type: string
       enum: [high, medium, low]

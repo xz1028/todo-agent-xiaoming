@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Task, TaskChanges, TaskStore } from "./task-store.ts";
 
 /** OpenAI function calling 所需的工具定义（最小接口，不依赖具体 SDK 类型）。 */
@@ -161,8 +162,8 @@ function requireId(args: JsonObject): { id?: string; error?: string } {
 function attributes(args: JsonObject): { changes: TaskChanges; error?: string } {
   const changes: TaskChanges = {};
   if (args.dueDate !== undefined) {
-    if (typeof args.dueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(args.dueDate)) {
-      return { changes, error: "到期日必须是 YYYY-MM-DD 格式。" };
+    if (typeof args.dueDate !== "string" || !z.iso.date().safeParse(args.dueDate).success) {
+      return { changes, error: "到期日必须是 YYYY-MM-DD 格式的有效日期。" };
     }
     changes.dueDate = args.dueDate;
   }
@@ -246,9 +247,13 @@ export function executeTool(
       let tasks = store.list();
       if (raw.filter === "pending") tasks = tasks.filter((task) => !task.done);
       if (raw.filter === "done") tasks = tasks.filter((task) => task.done);
-      if (raw.dueToday) tasks = tasks.filter((task) => !task.done && task.dueDate === today);
-      if (raw.overdue) {
-        tasks = tasks.filter((task) => !task.done && !!task.dueDate && task.dueDate < today);
+      if (raw.dueToday || raw.overdue) {
+        tasks = tasks.filter(
+          (task) =>
+            !task.done &&
+            !!task.dueDate &&
+            ((raw.dueToday && task.dueDate === today) || (raw.overdue && task.dueDate < today)),
+        );
       }
       // 未完成置顶，方便模型与用户一眼看出待处理项。
       tasks = [...tasks.filter((task) => !task.done), ...tasks.filter((task) => task.done)];

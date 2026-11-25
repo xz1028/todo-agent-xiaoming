@@ -92,6 +92,20 @@ test("任务 API 接受 effort 别名并归一化为 workload", async (t) => {
   assert.equal(updated.body.workload, "small");
 });
 
+test("任务 API 拒绝无效日历日期并保留原数据，接受合法闰日", async (t) => {
+  const { request } = await startTestApp(t);
+  const created = await request("POST", "/api/tasks", { title: "原任务", dueDate: "2024-02-29" });
+  assert.equal(created.status, 201);
+  for (const dueDate of ["2026-02-30", "2025-02-29", "1900-02-29", "2026-13-01"]) {
+    assert.equal((await request("POST", "/api/tasks", { title: "无效", dueDate })).status, 400);
+    assert.equal(
+      (await request("PATCH", "/api/tasks/" + created.body.id, { dueDate })).status,
+      400,
+    );
+    assert.deepEqual((await request("GET", "/api/tasks")).body, [created.body]);
+  }
+});
+
 test("更新已有 JSON 清单时保留其他任务和扩展字段", async (t) => {
   const { request, filename } = await startTestApp(t);
   const first = { id: "a", title: "买牛奶", done: false, priority: 1 };

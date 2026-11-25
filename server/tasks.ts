@@ -4,10 +4,7 @@ import { priorities, workloads, type TaskChanges, type TaskStore } from "./task-
 
 const titleField = z.string().trim().min(1).max(200);
 const attributes = {
-  dueDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "请使用 YYYY-MM-DD 格式的日期")
-    .optional(),
+  dueDate: z.iso.date("请使用 YYYY-MM-DD 格式的有效日期").optional(),
   priority: z.enum(priorities).optional(),
   workload: z.enum(workloads).optional(),
   // effort 是 workload 的输入别名：两种命名都接受，统一存为 workload。

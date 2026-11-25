@@ -109,6 +109,41 @@ test("对不存在的 id 操作返回结构化错误", async (t) => {
 
 const frozenNow = () => new Date("2026-11-25T02:00:00Z"); // 上海时间 2026-11-25 10:00
 
+test("到期组合筛选取并集，上海跨日时仍排除已完成、未来和无日期任务", async (t) => {
+  const store = await newStore(t);
+  const today = store.create("今天交", { dueDate: "2026-11-25" });
+  const overdue = store.create("已逾期", { dueDate: "2026-11-24" });
+  store.create("未来", { dueDate: "2026-11-26" });
+  store.create("无日期");
+  store.create("今天已完成", { dueDate: "2026-11-25", done: true });
+  store.create("逾期已完成", { dueDate: "2026-11-24", done: true });
+  const now = () => new Date("2026-11-24T16:30:00Z");
+  const out = JSON.parse(executeTool("list_tasks", '{"dueToday":true,"overdue":true}', store, now));
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.tasks, [today, overdue]);
+});
+
+test("工具拒绝不存在的日历日期，失败创建或修改均不落盘", async (t) => {
+  const store = await newStore(t);
+  const task = store.create("保留原任务", { dueDate: "2026-11-25" });
+  for (const dueDate of ["2026-02-30", "2025-02-29", "1900-02-29", "2026-13-01", "2026-00-10"]) {
+    for (const [name, args] of [
+      ["add_tasks", { titles: ["错误日期"], dueDate }],
+      ["update_task", { id: task.id, dueDate }],
+    ] as const) {
+      assert.equal(result(executeTool(name, JSON.stringify(args), store)).ok, false, dueDate);
+      assert.deepEqual(store.list(), [task]);
+    }
+  }
+  assert.equal(
+    result(
+      executeTool("update_task", JSON.stringify({ id: task.id, dueDate: "2024-02-29" }), store),
+    ).ok,
+    true,
+  );
+  assert.equal(store.list()[0].dueDate, "2024-02-29");
+});
+
 test("扩展1：清单摘要未完成置顶并显示统计", async (t) => {
   const store = await newStore(t);
   executeTool("add_tasks", JSON.stringify({ titles: ["A", "B"] }), store);

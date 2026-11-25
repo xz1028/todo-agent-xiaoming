@@ -9,6 +9,8 @@
 - `server/deletion-confirmation.ts`：汇总删除后的确认记录、一次性确认码、5 分钟有效期、取消与任务快照校验；`server/index.ts` 将其接入 `data/pending-deletion.json`。测试不传 `confirmationFile` 时使用实例内存，不写项目数据。
 - `server/index.ts`：用依赖注入组装 `createAgent` 与 `createApp`。
 - agent 单轮最多 6 次工具迭代，每次模型请求使用 SDK 请求选项 `signal: AbortSignal.timeout(20_000)` 和 `maxRetries: 0`。20 秒是单次模型调用的期限，工具循环可能包含多次调用；无 key、网络错误、超时或模型异常时返回中文兜底文案，不产生 500。
+- 模型请求显式关闭思考模式，避免 DeepSeek 默认思考模式要求的 `reasoning_content` 历史回填；工具循环只处理当前声明的消息字段。
+- 日期输入通过 zod 校验有效日历日期；`dueToday` 和 `overdue` 同时启用时取并集，仅包括未完成任务。
 
 ## 运行
 
@@ -23,6 +25,20 @@ npm run dev                 # http://127.0.0.1:3000
 修改 `src/*.tsx` 后需 `npm run build` 并刷新页面。
 
 ## 验证
+
+### 2026-11-25 提交前检查状态
+
+| 检查                       | 结果                                              |
+| -------------------------- | ------------------------------------------------- |
+| 当前源码的离线测试         | 49 / 49 通过                                      |
+| 类型、lint、格式与前端构建 | 全部通过；类型检查包括验收脚本                    |
+| 干净源码副本的安装与检查   | `npm ci` 成功，同样的 49 项测试与全部质量检查通过 |
+| 独立只读代码审查           | 已修复发现的空白 `BASE_URL` 问题，无遗留重要问题  |
+| GitHub Actions             | 已提供无 key 的工作流，等待 push 后在远端执行     |
+| 真实 DeepSeek 验收         | 待本地填写 key 后执行，不以离线测试代替           |
+| `SUBMIT.md`                | 保持未改动，由提交者本人核对和完成                |
+
+### 检查命令
 
 ```sh
 npm test && npm run typecheck && npm run lint && npm run fmt:check && npm run build
@@ -39,13 +55,19 @@ npm test && npm run typecheck && npm run lint && npm run fmt:check && npm run bu
 
 ### 真机验收（需 DEEPSEEK_API_KEY）
 
-填好 `.env` 中的 key 并启动服务后运行：
+填好 `.env` 中的 key 后运行，无需提前启动服务：
 
 ```sh
-node --env-file-if-exists=.env scripts/acceptance.ts
+npm run acceptance
+# 包含可选扩展场景
+npm run acceptance -- --extended
 ```
 
-脚本会清空现有任务，累积 `messages` 跑完 6 步，打印每轮回复并逐轮读取 `/api/tasks` 核对状态。也可用 `BASE_URL` 指定其他地址。重启服务后再问「再给我看看清单」可验证任务持久化。
+默认自动启动生产服务入口，使用随机端口和临时数据目录，累积 `messages` 跑完六步并断言每一步真实状态与清单展示，然后停止、重启进程验证持久化。正常完成或断言失败时清理临时进程和数据，不操作仓库中的 `data/`。请求失败、兜底或断言不符时非零退出。
+
+扩展场景检查相对日期、优先级/工作量、到期并集、批量确认、子任务、父子删除取消与确认以及相似任务消歧。
+
+`BASE_URL=http://127.0.0.1:3001 npm run acceptance` 可指定外部服务，但要求目标清单为空，非空则拒绝运行且不清空数据；外部模式不自动重启服务，验收后会保留新建的测试任务。
 
 ## 已实现功能
 

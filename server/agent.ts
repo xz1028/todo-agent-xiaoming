@@ -86,7 +86,13 @@ export function createAgent(deps: AgentDeps): Agent {
 
   async function callModel(conversation: Array<Record<string, unknown>>) {
     const completion = await getClient().chat.completions.create(
-      { model, messages: conversation, tools: AGENT_TOOLS, tool_choice: "auto" },
+      {
+        model,
+        messages: conversation,
+        tools: AGENT_TOOLS,
+        tool_choice: "auto",
+        thinking: { type: "disabled" },
+      },
       { signal: AbortSignal.timeout(20_000), maxRetries: 0 },
     );
     return completion.choices[0]?.message;

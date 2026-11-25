@@ -565,3 +565,43 @@ test("已登记删除但工具循环用尽时也不提交部分删除", async (t
   assert.match(answer, /稍后再试/u);
   assert.deepEqual(store.list(), [a]);
 });
+
+test("真实 SDK 请求显式关闭思考，使不携带 reasoning_content 的工具循环可完成", async (t) => {
+  const store = await newStore(t);
+  t.mock.method(console, "error", () => {});
+  const client = new OpenAI({
+    apiKey: "test-only-placeholder",
+    fetch: async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      // 按 DeepSeek 的非思考模式契约模拟边界，不访问外部服务。
+      if (body.thinking?.type !== "disabled") {
+        return new Response(
+          JSON.stringify({
+            error: { message: "工具请求必须选择兼容的思考模式", type: "invalid_request_error" },
+          }),
+          { status: 400 },
+        );
+      }
+      const hasToolResult = body.messages.some(
+        (message: { role: string }) => message.role === "tool",
+      );
+      const message = hasToolResult
+        ? finalText("已记下洗衣服")
+        : toolCall("add", "add_tasks", '{"titles":["洗衣服"]}');
+      return new Response(
+        JSON.stringify({
+          choices: [{ index: 0, message, finish_reason: hasToolResult ? "stop" : "tool_calls" }],
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    },
+  });
+  const answer = await createAgent({ tasks: store, client: client as unknown as ChatClient }).reply(
+    [{ role: "user", content: "帮我记一下洗衣服" }],
+  );
+  assert.equal(answer, "已记下洗衣服");
+  assert.deepEqual(
+    store.list().map(({ title, done }) => ({ title, done })),
+    [{ title: "洗衣服", done: false }],
+  );
+});
