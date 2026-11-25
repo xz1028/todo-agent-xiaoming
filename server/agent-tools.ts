@@ -90,14 +90,34 @@ export const AGENT_TOOLS = [
     function: {
       name: "delete_task",
       description:
-        "删除一条任务。id 必须来自 list_tasks 的结果；有子任务时需先向用户确认 cascade。",
+        "登记一条删除请求，id 必须来自 list_tasks。本轮结束后服务端决定直接删除或请求确认；工具不直接删除。",
       parameters: {
         type: "object",
         properties: {
           id: { type: "string", description: "任务 id" },
-          cascade: { type: "boolean", description: "用户确认后设为 true，一并删除子任务" },
+          cascade: { type: "boolean", description: "兼容旧参数；不能代替用户确认，也不授权删除" },
         },
         required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_tasks",
+      description:
+        "登记批量删除请求，ids 必须来自 list_tasks。服务端在本轮结束后请求用户确认，工具不直接删除。",
+      parameters: {
+        type: "object",
+        properties: {
+          ids: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            description: "本轮所有待删除任务的 id",
+          },
+        },
+        required: ["ids"],
       },
     },
   },
@@ -110,7 +130,7 @@ interface ScriptResult {
   tasks?: Task[];
   task?: Task;
   summary?: string;
-  children?: number;
+  deletionIds?: string[];
 }
 
 const error = (message: string): string =>
@@ -283,21 +303,35 @@ export function executeTool(
       return success({ task: updated, summary: summary() });
     }
 
-    case "delete_task": {
-      const { id, error: idError } = requireId(raw);
-      if (idError || !id) return error(idError ?? "缺少任务 id。");
-      const current = store.list();
-      const target = current.find((task) => task.id === id);
-      if (!target) return error("找不到这条任务，请先调用 list_tasks 确认 id。");
-      const childCount = current.filter((task) => task.parentId === id).length;
-      // 有子任务且未经用户确认时，先返回提示，不执行删除。
-      if (childCount && raw.cascade !== true) {
-        return error(
-          `这条任务下有 ${childCount} 个子任务。请向用户确认是否一并删除，确认后用 cascade=true 重试。`,
-        );
+    case "delete_task":
+    case "delete_tasks": {
+      let ids: string[];
+      if (name === "delete_task") {
+        const { id, error: idError } = requireId(raw);
+        if (idError || !id) return error(idError ?? "缺少任务 id。");
+        if (raw.cascade !== undefined && typeof raw.cascade !== "boolean") {
+          return error("cascade 必须是布尔值，且不能代替用户确认。");
+        }
+        ids = [id];
+      } else {
+        if (
+          !Array.isArray(raw.ids) ||
+          !raw.ids.length ||
+          !raw.ids.every((id) => typeof id === "string" && id.trim())
+        ) {
+          return error("请提供非空的任务 id 数组（ids）。");
+        }
+        ids = [...new Set(raw.ids as string[])];
       }
-      store.remove(id);
-      return success({ summary: summary(), children: childCount });
+      const current = store.list();
+      if (!ids.every((id) => current.some((task) => task.id === id))) {
+        return error("找不到任务，请先调用 list_tasks 确认全部 id；未登记任何删除。");
+      }
+      return success({
+        deletionIds: ids,
+        summary:
+          "删除请求已登记，尚未执行。本轮结束后服务端统一执行单条普通删除，或向用户请求批量/父子任务删除确认。不要重复登记。",
+      });
     }
 
     default:

@@ -31,6 +31,7 @@ export interface TaskStore {
   create(title: string, attrs?: TaskChanges): Task;
   update(id: string, changes: TaskChanges): Task | undefined;
   remove(id: string): boolean;
+  removeMany(ids: string[]): number;
 }
 
 function compact(changes: TaskChanges): TaskChanges {
@@ -55,8 +56,20 @@ export function createJsonTaskStore(filename: string): TaskStore {
     renameSync(temporary, filename);
   }
 
+  function removeMany(ids: string[]): number {
+    const selected = new Set(ids);
+    const tasks = list();
+    const remaining = tasks.filter(
+      (task) => !selected.has(task.id) && !selected.has(task.parentId ?? ""),
+    );
+    const count = tasks.length - remaining.length;
+    if (count) save(remaining);
+    return count;
+  }
+
   return {
     list,
+    removeMany,
 
     create(title, attrs = {}) {
       const task: Task = { id: randomUUID(), title, done: false, ...compact(attrs) };
@@ -75,13 +88,7 @@ export function createJsonTaskStore(filename: string): TaskStore {
     },
 
     remove(id) {
-      const tasks = list();
-      // 删除父任务时一并移除其子任务，避免留下无法展示的孤儿节点。
-      const remaining = tasks.filter((task) => task.id !== id && task.parentId !== id);
-      if (remaining.length === tasks.length) return false;
-
-      save(remaining);
-      return true;
+      return removeMany([id]) > 0;
     },
   };
 }

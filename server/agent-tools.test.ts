@@ -75,7 +75,7 @@ test("list_tasks 支持 all / pending / done 过滤", async (t) => {
   );
 });
 
-test("complete_task 支持撤销完成，update_task 改名，delete_task 删除", async (t) => {
+test("complete_task 支持撤销完成，update_task 改名，delete_task 登记删除", async (t) => {
   const store = await newStore(t);
   executeTool("add_tasks", JSON.stringify({ titles: ["买牛奶"] }), store);
   const id = store.list()[0].id;
@@ -95,7 +95,7 @@ test("complete_task 支持撤销完成，update_task 改名，delete_task 删除
   assert.equal(store.list()[0].title, "买面包");
 
   assert.equal(result(executeTool("delete_task", JSON.stringify({ id }), store)).ok, true);
-  assert.equal(store.list().length, 0);
+  assert.equal(store.list().length, 1, "工具不直接执行删除，由 agent 汇总后决定是否需要确认");
 });
 
 test("对不存在的 id 操作返回结构化错误", async (t) => {
@@ -211,27 +211,37 @@ test("扩展3：dueToday 与 overdue 过滤今天/逾期未完成任务", async 
   );
 });
 
-test("扩展4：删除含子任务的父任务需 cascade 确认", async (t) => {
+test("删除工具只登记 id，cascade=true 也不能直接删除父子任务", async (t) => {
   const store = await newStore(t);
-  executeTool("add_tasks", JSON.stringify({ titles: ["父任务"] }), store, frozenNow);
-  const parent = store.list()[0];
-  executeTool(
-    "add_tasks",
-    JSON.stringify({ titles: ["子任务"], parentId: parent.id }),
-    store,
-    frozenNow,
-  );
+  const parent = store.create("父任务");
+  store.create("子任务", { parentId: parent.id });
+  for (const cascade of [false, true]) {
+    const out = JSON.parse(
+      executeTool("delete_task", JSON.stringify({ id: parent.id, cascade }), store),
+    );
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.deletionIds, [parent.id]);
+    assert.equal(store.list().length, 2);
+  }
+});
 
-  const blocked = result(
-    executeTool("delete_task", JSON.stringify({ id: parent.id }), store, frozenNow),
+test("批量删除工具验证全部 id 后去重登记，错误参数不能登记部分删除", async (t) => {
+  const store = await newStore(t);
+  const a = store.create("A");
+  const b = store.create("B");
+  const valid = JSON.parse(
+    executeTool("delete_tasks", JSON.stringify({ ids: [a.id, b.id, a.id] }), store),
   );
-  assert.equal(blocked.ok, false);
-  assert.match(blocked.error ?? "", /子任务|确认/);
-  assert.equal(store.list().length, 2, "未确认时不应删除");
-
-  const confirmed = result(
-    executeTool("delete_task", JSON.stringify({ id: parent.id, cascade: true }), store, frozenNow),
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.deletionIds, [a.id, b.id]);
+  for (const ids of [[], "all", [""], [a.id, 1], [a.id, "missing"]]) {
+    const out = JSON.parse(executeTool("delete_tasks", JSON.stringify({ ids }), store));
+    assert.equal(out.ok, false);
+    assert.equal(out.deletionIds, undefined);
+  }
+  assert.equal(
+    result(executeTool("delete_task", JSON.stringify({ id: a.id, cascade: "true" }), store)).ok,
+    false,
   );
-  assert.equal(confirmed.ok, true);
-  assert.equal(store.list().length, 0, "确认后父任务与子任务一并删除");
+  assert.equal(store.list().length, 2);
 });

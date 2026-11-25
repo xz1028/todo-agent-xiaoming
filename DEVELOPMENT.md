@@ -4,10 +4,11 @@
 
 ## 架构
 
-- `server/agent.ts`：`createAgent({ tasks, client?, model?, now? })`，通过 OpenAI function calling 工具循环工作；`client` 懒加载，缺 key 时服务照常启动。
-- `server/agent-tools.ts`：工具 schema（`list_tasks` / `add_tasks` / `complete_task` / `update_task` / `delete_task`）与执行器；参数错误返回结构化 JSON，不抛异常。
+- `server/agent.ts`：`createAgent({ tasks, client?, model?, now?, confirmationFile? })`，通过 OpenAI function calling 工具循环工作；`client` 懒加载，缺 key 时服务照常启动。
+- `server/agent-tools.ts`：工具 schema（`list_tasks` / `add_tasks` / `complete_task` / `update_task` / `delete_task` / `delete_tasks`）与执行器；参数错误返回结构化 JSON，不抛异常。
+- `server/deletion-confirmation.ts`：汇总删除后的确认记录、一次性确认码、5 分钟有效期、取消与任务快照校验；`server/index.ts` 将其接入 `data/pending-deletion.json`。测试不传 `confirmationFile` 时使用实例内存，不写项目数据。
 - `server/index.ts`：用依赖注入组装 `createAgent` 与 `createApp`。
-- agent 单轮最多 6 次工具迭代；无 key、网络错误、超时或模型异常时返回中文兜底文案，不产生 500。
+- agent 单轮最多 6 次工具迭代，每次模型请求使用 SDK 请求选项 `signal: AbortSignal.timeout(20_000)` 和 `maxRetries: 0`。20 秒是单次模型调用的期限，工具循环可能包含多次调用；无 key、网络错误、超时或模型异常时返回中文兜底文案，不产生 500。
 
 ## 运行
 
@@ -31,8 +32,9 @@ npm test && npm run typecheck && npm run lint && npm run fmt:check && npm run bu
 
 - 验收 6 步（创建 / 创建 / 查看 / 完成 / 删除 / 查看）及每步的真实存储状态；
 - 工具层增删改查、多条添加、非法 JSON、空/超长标题、trim、不存在的 id；
-- 兜底：client 抛错、工具迭代超上限；
-- 扩展：清单摘要置顶统计、priority/effort 写入、dueToday/overdue 过滤、子任务 cascade 确认；
+- 兜底：client 抛错、工具迭代超上限，以及真实 OpenAI SDK 在受控传输下的请求中止与禁止自动重试；
+- 扩展：清单摘要置顶统计、priority/effort 写入、dueToday/overdue 过滤、子任务删除确认；
+- 删除状态：跨工具调用汇总、批量工具、模型伪造 `cascade`、重启后确认、确认过期、取消、重放、任务变更和异常时不提交部分删除；
 - HTTP 层：任务 API 兼容性与 `effort` 别名归一化。
 
 ### 真机验收（需 DEEPSEEK_API_KEY）
@@ -51,5 +53,13 @@ node --env-file-if-exists=.env scripts/acceptance.ts
 - 一句话多任务、语义匹配（「牛奶买好了」）、相似任务反问、不存在如实告知、破坏性操作确认。
 - 扩展：未完成置顶与统计、优先级、工作量（`effort`/`workload`）、到期日、今天/逾期过滤、子任务 cascade 删除。
 - 前端清单状态视觉分层与换行显示。
+
+## 删除确认的执行规则
+
+聊天工具的 `delete_task` / `delete_tasks` 仅验证并登记 id，不修改任务文件。agent 汇总本轮全部模型调用中的删除请求，等模型返回最终消息后统一判断：一条普通任务直接删除；涉及多条任务（包括父任务的子任务）则保存快照、随机确认码和过期时间，返回服务端生成的待确认提示。模型返回的「已删除」和 `cascade=true` 均不构成授权。
+
+用户需完整复制提示中的 `确认删除 <确认码>`，或使用 `取消删除 <确认码>`。服务端只读取最后一条用户消息中的完整指令，不依赖模型或客户端提交的历史确认。确认码有效期为 5 分钟，执行或取消后不能重放；快照中的任务及子任务关系有变更时拒绝执行，新增的无关任务不会被删除。新的删除请求会替换当前待确认操作。清除确认记录失败时不删任务；清除成功后任务写入失败时需重新发起删除，避免旧确认码重复执行。
+
+批量任务变更通过一次临时文件写入与 rename 提交。当前沿用本地单用户、单服务进程的约束，同一任务清单只保留一个待确认操作；多用户或多个写入进程需要另行增加隔离与并发控制。显式调用任务 REST API 的删除契约保持原样，本节确认机制作用于模型发起的聊天删除。
 
 取舍点与边界情况详见 `NOTES_FOR_SUBMIT.md`（供候选人撰写 SUBMIT.md 参考，本次未改动 SUBMIT.md）。
