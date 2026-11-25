@@ -57,6 +57,9 @@ function systemPrompt(now: () => Date): string {
     "意图模糊或破坏性的操作（如「全删了」「把任务都清掉」）先向用户确认，不要直接执行。",
     "闲聊或与待办无关的问题就正常用中文回应，不要调用任何工具，也不要编造任务状态。",
     "完成任务或删除后，用简短中文说明结果；列出清单时未完成的排在前面，用 ⬜ 表示未完成、✅ 表示已完成，并给出未完成数量。",
+    "扩展字段：add_tasks/update_task 可带 priority（high/medium/low）、effort（small/medium/large）、dueDate（YYYY-MM-DD）；「明天」「周五」按今天的日期换算成 YYYY-MM-DD。",
+    "「今天要做什么」用 list_tasks 的 dueToday 和 overdue 参数，只返回今天到期和已逾期且未完成的任务。",
+    "子任务用 add_tasks 的 parentId 关联父任务；删除含子任务的父任务时工具会要求确认，先问用户，得到同意后再用 cascade=true 删除。若所有子任务都完成，可提示用户把父任务也标记完成。",
   ].join("\n");
 }
 
@@ -105,7 +108,7 @@ export function createAgent(deps: AgentDeps): Agent {
             for (const call of message.tool_calls) {
               let output: string;
               try {
-                output = executeTool(call.function.name, call.function.arguments, tasks);
+                output = executeTool(call.function.name, call.function.arguments, tasks, now);
               } catch (toolError) {
                 console.error("工具执行异常：", toolError);
                 output = JSON.stringify({ ok: false, error: "工具执行失败，请重试。" });

@@ -33,6 +33,7 @@ paths:
                 dueDate: { $ref: "#/components/schemas/DueDate" }
                 priority: { $ref: "#/components/schemas/Priority" }
                 workload: { $ref: "#/components/schemas/Workload" }
+                effort: { $ref: "#/components/schemas/Effort" }
                 parentId: { type: string, description: 父任务 id }
       responses:
         "201":
@@ -64,6 +65,7 @@ paths:
                 dueDate: { $ref: "#/components/schemas/DueDate" }
                 priority: { $ref: "#/components/schemas/Priority" }
                 workload: { $ref: "#/components/schemas/Workload" }
+                effort: { $ref: "#/components/schemas/Effort" }
                 parentId: { type: string, nullable: true }
       responses:
         "200":
@@ -97,6 +99,10 @@ components:
     Workload:
       type: string
       enum: [small, medium, large]
+    Effort:
+      type: string
+      enum: [small, medium, large]
+      description: workload 的输入别名，写入时统一归一化为 workload
     Task:
       type: object
       required: [id, title, done]

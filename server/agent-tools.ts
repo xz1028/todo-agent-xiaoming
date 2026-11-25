@@ -1,4 +1,4 @@
-import type { TaskStore } from "./task-store.ts";
+import type { Task, TaskChanges, TaskStore } from "./task-store.ts";
 
 /** OpenAI function calling 所需的工具定义（最小接口，不依赖具体 SDK 类型）。 */
 export const AGENT_TOOLS = [
@@ -15,6 +15,11 @@ export const AGENT_TOOLS = [
             enum: ["all", "pending", "done"],
             description: "all=全部（默认），pending=未完成，done=已完成",
           },
+          dueToday: { type: "boolean", description: "只返回今天到期的未完成任务" },
+          overdue: {
+            type: "boolean",
+            description: "只返回已逾期（到期日早于今天）的未完成任务",
+          },
         },
       },
     },
@@ -23,7 +28,8 @@ export const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "add_tasks",
-      description: "新增一条或多条任务；一句话里有多条任务时一次传入 titles 数组。",
+      description:
+        "新增一条或多条任务；一句话里有多条任务时一次传入 titles 数组。可附带到期日、优先级、工作量或父任务。",
       parameters: {
         type: "object",
         properties: {
@@ -33,6 +39,14 @@ export const AGENT_TOOLS = [
             description: "任务标题数组，每项为 1 至 200 个字符",
             minItems: 1,
           },
+          dueDate: { type: "string", description: "到期日 YYYY-MM-DD（由相对日期换算）" },
+          priority: { type: "string", enum: ["high", "medium", "low"] },
+          effort: {
+            type: "string",
+            enum: ["small", "medium", "large"],
+            description: "工作量，别名 workload",
+          },
+          parentId: { type: "string", description: "父任务 id，用于创建子任务" },
         },
         required: ["titles"],
       },
@@ -57,14 +71,17 @@ export const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "update_task",
-      description: "修改一条任务的标题。id 必须来自 list_tasks 的结果。",
+      description: "修改一条任务的标题或扩展属性。id 必须来自 list_tasks 的结果。",
       parameters: {
         type: "object",
         properties: {
           id: { type: "string", description: "任务 id" },
           title: { type: "string", description: "新标题，1 至 200 个字符" },
+          dueDate: { type: "string", description: "到期日 YYYY-MM-DD" },
+          priority: { type: "string", enum: ["high", "medium", "low"] },
+          effort: { type: "string", enum: ["small", "medium", "large"] },
         },
-        required: ["id", "title"],
+        required: ["id"],
       },
     },
   },
@@ -72,10 +89,14 @@ export const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "delete_task",
-      description: "删除一条任务。id 必须来自 list_tasks 的结果。",
+      description:
+        "删除一条任务。id 必须来自 list_tasks 的结果；有子任务时需先向用户确认 cascade。",
       parameters: {
         type: "object",
-        properties: { id: { type: "string", description: "任务 id" } },
+        properties: {
+          id: { type: "string", description: "任务 id" },
+          cascade: { type: "boolean", description: "用户确认后设为 true，一并删除子任务" },
+        },
         required: ["id"],
       },
     },
@@ -83,13 +104,14 @@ export const AGENT_TOOLS = [
 ] as const;
 
 type JsonObject = Record<string, unknown>;
-type ScriptResult = {
+interface ScriptResult {
   ok: boolean;
   error?: string;
-  tasks?: unknown[];
-  task?: unknown;
+  tasks?: Task[];
+  task?: Task;
   summary?: string;
-};
+  children?: number;
+}
 
 const error = (message: string): string =>
   JSON.stringify({ ok: false, error: message } satisfies ScriptResult);
@@ -115,14 +137,71 @@ function requireId(args: JsonObject): { id?: string; error?: string } {
   return { id: args.id };
 }
 
-function summaryOf(tasks: ReturnType<TaskStore["list"]>): string {
-  const pending = tasks.filter((task) => !task.done).length;
-  const lines = tasks.map((task) => `${task.done ? "✅" : "⬜"} ${task.title}`);
-  return `共 ${tasks.length} 项，未完成 ${pending} 项。\n${lines.join("\n")}`.trim();
+/** 从工具参数里提取可选扩展字段；effort 是 workload 的输入别名。 */
+function attributes(args: JsonObject): { changes: TaskChanges; error?: string } {
+  const changes: TaskChanges = {};
+  if (args.dueDate !== undefined) {
+    if (typeof args.dueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(args.dueDate)) {
+      return { changes, error: "到期日必须是 YYYY-MM-DD 格式。" };
+    }
+    changes.dueDate = args.dueDate;
+  }
+  if (args.priority !== undefined) {
+    if (!["high", "medium", "low"].includes(args.priority as string)) {
+      return { changes, error: "优先级只能是 high、medium 或 low。" };
+    }
+    changes.priority = args.priority as Task["priority"];
+  }
+  const effort = args.effort ?? args.workload;
+  if (effort !== undefined) {
+    if (!["small", "medium", "large"].includes(effort as string)) {
+      return { changes, error: "工作量只能是 small、medium 或 large。" };
+    }
+    changes.workload = effort as Task["workload"];
+  }
+  if (args.parentId !== undefined) {
+    if (typeof args.parentId !== "string") return { changes, error: "父任务 id 必须是文字。" };
+    changes.parentId = args.parentId;
+  }
+  return { changes };
+}
+
+function todayISO(now: () => Date): string {
+  return now().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
+}
+
+/** 单任务行：状态标记 + 属性标签；未完成排在前面由调用方保证。 */
+function taskLine(task: Task, today: string): string {
+  const tags: string[] = [];
+  if (task.dueDate) {
+    if (task.done) tags.push(`截止 ${task.dueDate}`);
+    else if (task.dueDate < today) tags.push("已逾期");
+    else if (task.dueDate === today) tags.push("今天到期");
+    else tags.push(`截止 ${task.dueDate}`);
+  }
+  if (task.priority) tags.push(`优先级 ${task.priority}`);
+  if (task.workload) tags.push(`工作量 ${task.workload}`);
+  if (task.parentId) tags.push("子任务");
+  const suffix = tags.length ? ` · ${tags.join(" · ")}` : "";
+  return `${task.done ? "✅" : "⬜"} ${task.title}${suffix}`;
+}
+
+/** 预格式化摘要：未完成置顶、显示统计与完成状态；供模型直接引用。 */
+export function summaryOf(tasks: Task[], now: () => Date = () => new Date()): string {
+  const pending = tasks.filter((task) => !task.done);
+  const ordered = [...pending, ...tasks.filter((task) => task.done)];
+  const today = todayISO(now);
+  const lines = ordered.map((task) => taskLine(task, today));
+  return `共 ${tasks.length} 项，未完成 ${pending.length} 项。${lines.length ? `\n${lines.join("\n")}` : ""}`;
 }
 
 /** 执行一个工具调用；任何失败都以结构化 JSON 返回，绝不抛异常给 agent 循环。 */
-export function executeTool(name: string, argsJson: string, store: TaskStore): string {
+export function executeTool(
+  name: string,
+  argsJson: string,
+  store: TaskStore,
+  now: () => Date = () => new Date(),
+): string {
   let raw: unknown;
   try {
     raw = JSON.parse(argsJson);
@@ -131,15 +210,29 @@ export function executeTool(name: string, argsJson: string, store: TaskStore): s
   }
   if (!isObject(raw)) return error("工具参数必须是一个对象。");
 
+  const summary = () => summaryOf(store.list(), now);
+
   switch (name) {
     case "list_tasks": {
       if (raw.filter !== undefined && !["all", "pending", "done"].includes(raw.filter as string)) {
         return error("filter 只能是 all、pending 或 done。");
       }
+      for (const flag of ["dueToday", "overdue"] as const) {
+        if (raw[flag] !== undefined && typeof raw[flag] !== "boolean") {
+          return error(`${flag} 必须是布尔值。`);
+        }
+      }
+      const today = todayISO(now);
       let tasks = store.list();
       if (raw.filter === "pending") tasks = tasks.filter((task) => !task.done);
       if (raw.filter === "done") tasks = tasks.filter((task) => task.done);
-      return success({ tasks, summary: summaryOf(tasks) });
+      if (raw.dueToday) tasks = tasks.filter((task) => !task.done && task.dueDate === today);
+      if (raw.overdue) {
+        tasks = tasks.filter((task) => !task.done && !!task.dueDate && task.dueDate < today);
+      }
+      // 未完成置顶，方便模型与用户一眼看出待处理项。
+      tasks = [...tasks.filter((task) => !task.done), ...tasks.filter((task) => task.done)];
+      return success({ tasks, summary: summaryOf(tasks, now) });
     }
 
     case "add_tasks": {
@@ -152,8 +245,10 @@ export function executeTool(name: string, argsJson: string, store: TaskStore): s
         if (titleError || !title) return error(`添加失败：${titleError}`);
         titles.push(title);
       }
-      const created = titles.map((title) => store.create(title));
-      return success({ tasks: created, summary: summaryOf(store.list()) });
+      const { changes, error: attrError } = attributes(raw);
+      if (attrError) return error(`添加失败：${attrError}`);
+      const created = titles.map((title) => store.create(title, changes));
+      return success({ tasks: created, summary: summary() });
     }
 
     case "complete_task": {
@@ -161,32 +256,48 @@ export function executeTool(name: string, argsJson: string, store: TaskStore): s
       if (idError || !id) return error(idError ?? "缺少任务 id。");
       const done = raw.done === undefined ? true : raw.done;
       if (typeof done !== "boolean") return error("done 必须是布尔值。");
-      const current = store.list().find((task) => task.id === id);
-      if (!current) return error("找不到这条任务，请先调用 list_tasks 确认 id。");
+      if (!store.list().some((task) => task.id === id)) {
+        return error("找不到这条任务，请先调用 list_tasks 确认 id。");
+      }
       const updated = store.update(id, { done });
-      return success({ task: updated, summary: summaryOf(store.list()) });
+      return success({ task: updated, summary: summary() });
     }
 
     case "update_task": {
       const { id, error: idError } = requireId(raw);
       if (idError || !id) return error(idError ?? "缺少任务 id。");
-      const { title, error: titleError } = cleanTitle(raw.title);
-      if (titleError || !title) return error(`修改失败：${titleError}`);
+      const changes: TaskChanges = {};
+      if (raw.title !== undefined) {
+        const { title, error: titleError } = cleanTitle(raw.title);
+        if (titleError || !title) return error(`修改失败：${titleError}`);
+        changes.title = title;
+      }
+      const attrs = attributes(raw);
+      if (attrs.error) return error(`修改失败：${attrs.error}`);
+      Object.assign(changes, attrs.changes);
+      if (!Object.keys(changes).length) return error("没有提供要修改的内容。");
       if (!store.list().some((task) => task.id === id)) {
         return error("找不到这条任务，请先调用 list_tasks 确认 id。");
       }
-      const updated = store.update(id, { title });
-      return success({ task: updated, summary: summaryOf(store.list()) });
+      const updated = store.update(id, changes);
+      return success({ task: updated, summary: summary() });
     }
 
     case "delete_task": {
       const { id, error: idError } = requireId(raw);
       if (idError || !id) return error(idError ?? "缺少任务 id。");
-      if (!store.list().some((task) => task.id === id)) {
-        return error("找不到这条任务，请先调用 list_tasks 确认 id。");
+      const current = store.list();
+      const target = current.find((task) => task.id === id);
+      if (!target) return error("找不到这条任务，请先调用 list_tasks 确认 id。");
+      const childCount = current.filter((task) => task.parentId === id).length;
+      // 有子任务且未经用户确认时，先返回提示，不执行删除。
+      if (childCount && raw.cascade !== true) {
+        return error(
+          `这条任务下有 ${childCount} 个子任务。请向用户确认是否一并删除，确认后用 cascade=true 重试。`,
+        );
       }
       store.remove(id);
-      return success({ summary: summaryOf(store.list()) });
+      return success({ summary: summary(), children: childCount });
     }
 
     default:

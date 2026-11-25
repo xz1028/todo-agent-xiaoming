@@ -72,6 +72,26 @@ test("任务 API 拒绝无效输入并区分不存在的任务", async (t) => {
   assert.equal((await request("DELETE", "/api/tasks/missing")).status, 404);
 });
 
+test("任务 API 接受 effort 别名并归一化为 workload", async (t) => {
+  const { request } = await startTestApp(t);
+  const created = await request("POST", "/api/tasks", {
+    title: "交报告",
+    priority: "high",
+    effort: "large",
+    dueDate: "2026-11-26",
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.title, "交报告");
+  assert.equal(created.body.priority, "high");
+  assert.equal(created.body.workload, "large");
+  assert.equal(created.body.dueDate, "2026-11-26");
+  assert.equal(created.body.effort, undefined, "别名不应写入存储");
+
+  const updated = await request("PATCH", `/api/tasks/${created.body.id}`, { effort: "small" });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.workload, "small");
+});
+
 test("更新已有 JSON 清单时保留其他任务和扩展字段", async (t) => {
   const { request, filename } = await startTestApp(t);
   const first = { id: "a", title: "买牛奶", done: false, priority: 1 };

@@ -195,3 +195,42 @@ test("注入的 now 出现在 system prompt，供日期换算使用", async (t) 
   assert.match(captured, /2026-11-25/);
   assert.match(captured, /Asia\/Shanghai/);
 });
+
+test("扩展2+3：模型带相对日期与扩展属性创建，并用 dueToday 查询今天到期", async (t) => {
+  const store = await newStore(t);
+  const client = scriptedClient(
+    [
+      // 第 1 步：模型依据 system prompt 中的日期把「明天」换算为 2026-11-26。
+      toolCall(
+        "e1",
+        "add_tasks",
+        JSON.stringify({
+          titles: ["交报告"],
+          dueDate: "2026-11-26",
+          priority: "high",
+          effort: "large",
+        }),
+      ),
+      finalText("已记下「交报告」，明天到期，高优先级，工作量大"),
+      // 第 2 步：「今天要做什么」→ 模型用 dueToday + overdue 过滤。
+      toolCall("e2", "list_tasks", JSON.stringify({ dueToday: true, overdue: true })),
+      finalText("今天到期：交报告；未完成 1 项"),
+    ],
+    store,
+  );
+  const agent = createAgent({
+    tasks: store,
+    client,
+    now: () => new Date("2026-11-25T02:00:00Z"), // 上海 2026-11-25
+  });
+
+  let turn = await say(agent, [], "帮我记一下交报告，明天到期，高优先级，工作量大");
+  const created = store.list()[0];
+  assert.equal(created.dueDate, "2026-11-26");
+  assert.equal(created.priority, "high");
+  assert.equal(created.workload, "large");
+  assert.match(turn.answer, /明天到期/);
+
+  turn = await say(agent, turn.history, "今天要做什么？");
+  assert.match(turn.answer, /交报告|未完成/);
+});
