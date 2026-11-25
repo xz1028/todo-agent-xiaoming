@@ -5,7 +5,7 @@ import type { TaskStore } from "./task-store.ts";
 import { taskRouter } from "./tasks.ts";
 
 interface AppDependencies {
-  reply(messages: ChatMessage[], tasks: TaskStore): Promise<string>;
+  reply(messages: ChatMessage[]): Promise<string>;
   tasks: TaskStore;
 }
 
@@ -18,7 +18,7 @@ export function createApp({ reply, tasks }: AppDependencies) {
     if (!input.success) {
       return res.status(400).json({ error: "请提供对话记录，并以用户消息结尾。" });
     }
-    const answer = await reply(input.data.messages, tasks);
+    const answer = await reply(input.data.messages);
     res.json({ reply: answer });
   });
 

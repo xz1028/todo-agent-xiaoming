@@ -1,118 +1,129 @@
 import type { ChatMessage } from "../shared/chat.ts";
-import type { Task, TaskChanges, TaskStore } from "./task-store.ts";
-import { cleanRef, findTask, parseRuleIntent, type TaskAttrs } from "./intent.ts";
-import { detailSuffix, formatList } from "./format.ts";
-import { parseModelIntent } from "./model-intent.ts";
+import { AGENT_TOOLS, executeTool } from "./agent-tools.ts";
+import { model as defaultModel, getModelClient } from "./model.ts";
+import type { TaskStore } from "./task-store.ts";
 
 export type { ChatMessage } from "../shared/chat.ts";
 
-function resolveParent(value: string | undefined, tasks: Task[]): string | undefined {
-  if (!value) return undefined;
-  const exact = tasks.find((task) => task.id === value);
-  if (exact) return exact.id;
-  return findTask(value, tasks)?.id;
+/** 工具调用的最小结构，足以驱动循环，也方便测试注入假实现。 */
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
 }
 
-function toChanges(attrs: TaskAttrs, tasks: Task[]): TaskChanges {
-  const changes: TaskChanges = {};
-  if (attrs.title) changes.title = attrs.title;
-  if (attrs.dueDate) changes.dueDate = attrs.dueDate;
-  if (attrs.priority) changes.priority = attrs.priority;
-  if (attrs.workload) changes.workload = attrs.workload;
-  if (attrs.parentId) changes.parentId = resolveParent(attrs.parentId, tasks);
-  return changes;
+export interface ChatCompletionMessage {
+  role: "assistant";
+  content: string | null;
+  tool_calls?: ToolCall[];
 }
 
-/** 「这条」「刚才那个」等指代：从最近的对话轮次里找回被操作过的任务。 */
-function isPronoun(ref: string): boolean {
-  return cleanRef(ref).length === 0 || /^(这|那|它|刚才|刚刚)/.test(ref.trim());
+/** 只依赖 completions.create，测试可注入脚本化假实现，生产用 OpenAI 客户端。 */
+export interface ChatClient {
+  chat: {
+    completions: {
+      create(params?: Record<string, unknown>): Promise<{
+        choices: Array<{
+          index: number;
+          message: ChatCompletionMessage;
+          finish_reason?: string | null;
+        }>;
+      }>;
+    };
+  };
 }
 
-function recentRef(messages: ChatMessage[], tasks: Task[]): string | undefined {
-  for (let index = messages.length - 2; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role !== "user") continue;
-    const intent = parseRuleIntent(message.content, tasks);
-    if (intent.kind === "create") return intent.title;
-    if (intent.kind === "complete" || intent.kind === "delete" || intent.kind === "update") {
-      return intent.ref;
-    }
-  }
-  return undefined;
+export interface AgentDeps {
+  tasks: TaskStore;
+  client?: ChatClient;
+  model?: string;
+  now?: () => Date;
 }
 
-function findTarget(ref: string, messages: ChatMessage[], tasks: Task[], preferActive: boolean) {
-  const direct = findTask(ref, tasks, preferActive);
-  if (direct) return direct;
-  if (!isPronoun(ref)) return undefined;
-  const remembered = recentRef(messages, tasks);
-  return remembered ? findTask(remembered, tasks, preferActive) : undefined;
+export interface Agent {
+  reply(messages: ChatMessage[]): Promise<string>;
 }
 
-function helpText(): string {
+const MAX_TOOL_ITERATIONS = 6;
+const FALLBACK = "小明暂时连不上大模型，请检查 DEEPSEEK_API_KEY 后重启服务，或稍后再试。";
+
+function systemPrompt(now: () => Date): string {
+  const date = now().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
   return [
-    "我可以帮你管理待办，试试这样说：",
-    "· 帮我记一下买牛奶",
-    "· 我有哪些任务？",
-    "· 牛奶买好了",
-    "· 取快递这条删掉吧",
-    "还支持：明天到期、高优先级、工作量小、XX 的子任务。",
+    "你是「小明」，一个简洁友好的中文待办助手，通过工具管理用户的任务清单。",
+    `今天的日期是 ${date}（时区 Asia/Shanghai）。涉及「明天」「周五」等相对时间时据此换算为 YYYY-MM-DD。`,
+    "重要：不要凭对话历史判断任务状态。只要问题涉及已有任务（查看、完成、删除、改名），都必须先调用 list_tasks 获取最新清单，再按语义匹配任务的 id。",
+    "例如「牛奶买好了」对应清单里的「买牛奶」；匹配到多条相似任务时先反问用户选哪一条，一条都没有时如实告知，绝不编造。",
+    "意图模糊或破坏性的操作（如「全删了」「把任务都清掉」）先向用户确认，不要直接执行。",
+    "闲聊或与待办无关的问题就正常用中文回应，不要调用任何工具，也不要编造任务状态。",
+    "完成任务或删除后，用简短中文说明结果；列出清单时未完成的排在前面，用 ⬜ 表示未完成、✅ 表示已完成，并给出未完成数量。",
   ].join("\n");
 }
 
-/** 接收对话历史与任务存储，返回本轮回复；任务在回复前已落盘。 */
-export async function reply(messages: ChatMessage[], tasks: TaskStore): Promise<string> {
-  const text = messages.at(-1)?.content.trim() ?? "";
-  if (!text) return "请告诉我你想做什么。";
+function toClientMessage(message: ChatMessage): Record<string, unknown> {
+  return { role: message.role, content: message.content };
+}
 
-  const snapshot = tasks.list();
-  const rule = parseRuleIntent(text, snapshot);
-  const intent =
-    rule.confidence >= 0.8 ? rule : ((await parseModelIntent(text, snapshot, messages)) ?? rule);
-  let current = tasks.list();
+export function createAgent(deps: AgentDeps): Agent {
+  const { tasks, model = defaultModel, now = () => new Date() } = deps;
 
-  switch (intent.kind) {
-    case "help":
-      return helpText();
-
-    case "list":
-      return formatList(current, intent.scope);
-
-    case "create": {
-      const created = tasks.create(intent.title, toChanges(intent.attrs, current));
-      return `✅ 已记下「${created.title}」${detailSuffix(created)}。\n${formatList(tasks.list())}`;
-    }
-
-    case "complete": {
-      const target = findTarget(intent.ref, messages, current, true);
-      if (!target) return `没找到对应的任务。\n${formatList(current)}`;
-      if (target.done) return `「${target.title}」已经完成啦。\n${formatList(current)}`;
-      tasks.update(target.id, { done: true });
-      return `✅ 已完成「${target.title}」。\n${formatList(tasks.list())}`;
-    }
-
-    case "delete": {
-      const target = findTarget(intent.ref, messages, current, false);
-      if (!target) return `没找到对应的任务。\n${formatList(current)}`;
-      const childCount = current.filter((task) => task.parentId === target.id).length;
-      tasks.remove(target.id);
-      const suffix = childCount ? `及其 ${childCount} 个子任务` : "";
-      return `🗑 已删除「${target.title}」${suffix}。\n${formatList(tasks.list())}`;
-    }
-
-    case "update": {
-      const target = findTarget(intent.ref, messages, current, false);
-      if (!target) return `没找到对应的任务。\n${formatList(current)}`;
-      const changes = toChanges(intent.attrs, current);
-      if (Object.keys(changes).length === 0) {
-        return `没识别到要修改的内容。\n${helpText()}`;
-      }
-      const updated = tasks.update(target.id, changes);
-      const title = updated?.title ?? target.title;
-      return `✏️ 已更新「${title}」${detailSuffix(updated ?? target)}。\n${formatList(tasks.list())}`;
-    }
-
-    default:
-      return `我没太明白你的意思。\n${helpText()}\n${formatList(current)}`;
+  // client 懒加载：没有 key 时服务也能启动，只有真正 reply 才创建客户端。
+  let client: ChatClient | undefined = deps.client;
+  function getClient(): ChatClient {
+    if (!client) client = getModelClient() as unknown as ChatClient;
+    return client;
   }
+
+  async function callModel(conversation: Array<Record<string, unknown>>) {
+    const completion = await getClient().chat.completions.create({
+      model,
+      messages: conversation,
+      tools: AGENT_TOOLS,
+      tool_choice: "auto",
+    });
+    return completion.choices[0]?.message;
+  }
+
+  return {
+    async reply(messages: ChatMessage[]): Promise<string> {
+      const conversation: Array<Record<string, unknown>> = [
+        { role: "system", content: systemPrompt(now) },
+        ...messages.map(toClientMessage),
+      ];
+
+      try {
+        for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+          const message = await callModel(conversation);
+          if (!message) return FALLBACK;
+
+          if (message.tool_calls?.length) {
+            conversation.push({
+              role: "assistant",
+              content: message.content ?? "",
+              tool_calls: message.tool_calls,
+            });
+            for (const call of message.tool_calls) {
+              let output: string;
+              try {
+                output = executeTool(call.function.name, call.function.arguments, tasks);
+              } catch (toolError) {
+                console.error("工具执行异常：", toolError);
+                output = JSON.stringify({ ok: false, error: "工具执行失败，请重试。" });
+              }
+              conversation.push({ role: "tool", tool_call_id: call.id, content: output });
+            }
+            continue;
+          }
+
+          const text = (message.content ?? "").trim();
+          return text || FALLBACK;
+        }
+        return "我处理得有点慢，请稍后再试或换一种说法。";
+      } catch (error) {
+        // 无 key、网络错误、超时、模型返回异常都在这里兜底，避免 /api/chat 返回 500。
+        console.error("小明调用模型失败：", error);
+        return FALLBACK;
+      }
+    },
+  };
 }
