@@ -22,9 +22,9 @@ function MessageBody({ content }: { content: string }) {
       {lines.map((line, index) => {
         const className = line.startsWith("📋")
           ? "list-heading"
-          : /☑/.test(line)
+          : /[✅☑]/.test(line)
             ? "task-done"
-            : /☐/.test(line)
+            : /[⬜☐]/.test(line)
               ? "task-pending"
               : "";
         return (
