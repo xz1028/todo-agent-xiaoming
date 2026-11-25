@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { Task } from "./task-store.ts";
+import { priorities, workloads, type Task } from "./task-store.ts";
+import { sortTasks } from "./task-order.ts";
 import { todayISO } from "./task-view.ts";
 
 export const periods = ["today", "tomorrow", "this_week", "next_week", "this_month"] as const;
@@ -11,9 +12,14 @@ export const taskQuerySchema = z
     dueFrom: z.iso.date().optional(),
     dueTo: z.iso.date().optional(),
     period: z.enum(periods).optional(),
+    priority: z.enum(priorities).optional(),
+    effort: z.enum(workloads).optional(),
+    workload: z.enum(workloads).optional(),
+    sort: z.enum(["priority", "dueDate", "created"]).optional(),
   })
   .refine((q) => !q.dueFrom || !q.dueTo || q.dueFrom <= q.dueTo)
-  .refine((q) => !q.period || (!q.dueFrom && !q.dueTo));
+  .refine((q) => !q.period || (!q.dueFrom && !q.dueTo))
+  .refine((q) => q.effort === undefined || q.workload === undefined || q.effort === q.workload);
 export type TaskQuery = z.infer<typeof taskQuerySchema>;
 
 /** 将上海日历日期放入 UTC 运算，避免机器时区或夏令时改变日期。 */
@@ -37,6 +43,9 @@ export function queryTasks(tasks: Task[], query: TaskQuery, now: () => Date): Ta
   const today = todayISO(now);
   const [from, to] = query.period ? dateRange(query.period, today) : [query.dueFrom, query.dueTo];
   const selected = tasks.filter((task) => {
+    if (query.priority && (task.priority ?? "medium") !== query.priority) return false;
+    const effort = query.effort ?? query.workload;
+    if (effort && (task.workload ?? "medium") !== effort) return false;
     if (query.filter === "pending" && task.done) return false;
     if (query.filter === "done" && !task.done) return false;
     if (query.dueToday || query.overdue) {
@@ -54,5 +63,5 @@ export function queryTasks(tasks: Task[], query: TaskQuery, now: () => Date): Ta
     }
     return true;
   });
-  return [...selected.filter((task) => !task.done), ...selected.filter((task) => task.done)];
+  return sortTasks(selected, query.sort);
 }

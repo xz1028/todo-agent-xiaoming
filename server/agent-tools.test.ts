@@ -120,7 +120,7 @@ test("到期组合筛选取并集，上海跨日时仍排除已完成、未来�
   const now = () => new Date("2026-11-24T16:30:00Z");
   const out = JSON.parse(executeTool("list_tasks", '{"dueToday":true,"overdue":true}', store, now));
   assert.equal(out.ok, true);
-  assert.deepEqual(out.tasks, [today, overdue]);
+  assert.deepEqual(out.tasks, [overdue, today], "默认排序在同优先级下按到期日升序");
 });
 
 test("工具拒绝不存在的日历日期，失败创建或修改均不落盘", async (t) => {

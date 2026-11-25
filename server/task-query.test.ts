@@ -86,3 +86,60 @@ test("非法日期、倒置范围和互相冲突的范围参数返回错误，�
     assert.deepEqual(store.list(), [original]);
   }
 });
+
+test("优先级、日期和工作量与状态组合筛选，旧缺省字段按中处理且不改文件", async (t) => {
+  const { store, query } = await fixture(t);
+  store.create("匹配", { priority: "high", workload: "small", dueDate: "2026-11-27" });
+  store.create("工作量不同", { priority: "high", workload: "large", dueDate: "2026-11-27" });
+  store.create("已完成", {
+    priority: "high",
+    workload: "small",
+    dueDate: "2026-11-27",
+    done: true,
+  });
+  const old = store.create("旧记录");
+  const before = store.list();
+  assert.deepEqual(
+    query({ filter: "pending", priority: "high", effort: "small", period: "tomorrow" }).tasks.map(
+      (x: { title: string }) => x.title,
+    ),
+    ["匹配"],
+  );
+  assert.deepEqual(query({ priority: "medium", workload: "medium" }).tasks, [old]);
+  assert.deepEqual(store.list(), before);
+  for (const args of [
+    { priority: "urgent" },
+    { effort: "big" },
+    { sort: "invalid" },
+    { effort: "small", workload: "large" },
+  ])
+    assert.equal(query(args).ok, false);
+});
+
+test("默认优先级排序，日期升序及无日期末尾，同值维持创建顺序，可切换排序", async (t) => {
+  const { store, query } = await fixture(t);
+  store.create("低", { priority: "low", dueDate: "2026-11-20" });
+  store.create("高无日期", { priority: "high" });
+  store.create("高较晚", { priority: "high", dueDate: "2026-11-28" });
+  store.create("高较早1", { priority: "high", dueDate: "2026-11-27" });
+  store.create("高较早2", { priority: "high", dueDate: "2026-11-27" });
+  store.create("中");
+  const titles = (args: unknown) => query(args).tasks.map((x: { title: string }) => x.title);
+  assert.deepEqual(titles({}), ["高较早1", "高较早2", "高较晚", "高无日期", "中", "低"]);
+  assert.deepEqual(titles({ sort: "dueDate" }), [
+    "低",
+    "高较早1",
+    "高较早2",
+    "高较晚",
+    "高无日期",
+    "中",
+  ]);
+  assert.deepEqual(titles({ sort: "created" }), [
+    "低",
+    "高无日期",
+    "高较晚",
+    "高较早1",
+    "高较早2",
+    "中",
+  ]);
+});

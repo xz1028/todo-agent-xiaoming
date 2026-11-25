@@ -1,3 +1,4 @@
+import { sortTasks, type TaskSort } from "./task-order.ts";
 import type { Task } from "./task-store.ts";
 
 export function todayISO(now: () => Date): string {
@@ -25,6 +26,7 @@ export function summaryOf(
   tasks: Task[],
   now: () => Date = () => new Date(),
   allTasks: Task[] = tasks,
+  sort: TaskSort = "priority",
 ): string {
   const today = todayISO(now);
   const byId = new Map(allTasks.map((task) => [task.id, task]));
@@ -36,12 +38,13 @@ export function summaryOf(
       children.set(task.parentId, list);
     }
   }
-  const pending = tasks.filter((task) => !task.done);
+  const ordered = sortTasks(tasks, sort);
+  const pending = ordered.filter((task) => !task.done);
   const overdue = (task: Task) => !!task.dueDate && task.dueDate < today;
   const groups: Array<[string, Task[]]> = [
     ["待处理", pending.filter((task) => !overdue(task))],
     ["已逾期", pending.filter(overdue)],
-    ["已完成", tasks.filter((task) => task.done)],
+    ["已完成", ordered.filter((task) => task.done)],
   ];
   const lines = [`共 ${tasks.length} 项，未完成 ${pending.length} 项。`];
   for (const [name, items] of groups) {
@@ -70,8 +73,9 @@ export function summaryOf(
           "  ".repeat(Math.min(depth, 4)) +
             taskLine(task, today, children.get(task.id) ?? [], label),
         );
-        const visibleChildren = (children.get(task.id) ?? []).filter((child) =>
-          local.has(child.id),
+        const visibleChildren = sortTasks(
+          (children.get(task.id) ?? []).filter((child) => local.has(child.id)),
+          sort,
         );
         for (const child of visibleChildren.toReversed())
           stack.push({ task: child, depth: depth + 1 });

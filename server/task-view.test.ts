@@ -89,3 +89,16 @@ test("历史循环与孤儿关系展示每条一次并安全结束", () => {
   assert.equal(text.match(/⬜ 孤儿/g)?.length, 1);
   assert.match(text, /父任务不在清单中/u);
 });
+
+test("保留父子结构时同组兄弟按优先级排序，创建顺序选项能恢复原顺序", () => {
+  const tasks = [
+    item("父"),
+    item("低", { parentId: "父", priority: "low" }),
+    item("高", { parentId: "父", priority: "high" }),
+  ];
+  const text = summaryOf(tasks, now);
+  assert.ok(text.indexOf("⬜ 父") < text.indexOf("⬜ 高"));
+  assert.ok(text.indexOf("⬜ 高") < text.indexOf("⬜ 低"));
+  const created = summaryOf(tasks, now, tasks, "created");
+  assert.ok(created.indexOf("⬜ 低") < created.indexOf("⬜ 高"));
+});

@@ -14,6 +14,22 @@ export const AGENT_TOOLS = [
       parameters: {
         type: "object",
         properties: {
+          priority: {
+            type: "string",
+            enum: ["high", "medium", "low"],
+            description: "筛选优先级，缺省字段按medium比较",
+          },
+          effort: {
+            type: "string",
+            enum: ["small", "medium", "large"],
+            description: "筛选工作量，可与状态、日期、优先级组合；缺省字段按medium比较",
+          },
+          sort: {
+            type: "string",
+            enum: ["priority", "dueDate", "created"],
+            description:
+              "默认priority：优先级高到低，再按截止日期；可选择日期或创建顺序。分组与父子层级优先，兄弟任务按此排序",
+          },
           filter: {
             type: "string",
             enum: ["all", "pending", "done"],
@@ -224,11 +240,11 @@ function executeValidatedTool(
       const query = taskQuerySchema.safeParse(raw);
       if (!query.success)
         return error(
-          "查询条件无效，请检查状态、日期范围；日历范围 period 不能和 dueFrom/dueTo 并用。",
+          "查询条件无效，请检查状态、日期范围、优先级、工作量和排序；period不能与明确日期范围并用，effort/workload值须相同。",
         );
       const allTasks = store.list();
       const tasks = queryTasks(allTasks, query.data, now);
-      return success({ tasks, summary: summaryOf(tasks, now, allTasks) });
+      return success({ tasks, summary: summaryOf(tasks, now, allTasks, query.data.sort) });
     }
 
     case "add_tasks": {
