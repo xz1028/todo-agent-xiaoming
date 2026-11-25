@@ -15,12 +15,16 @@ import { createJsonTaskStore } from "./task-store.ts";
 
 const repository = resolve(import.meta.dirname, "..");
 
-async function target(t: TestContext, ignoreCreation = false, wrongDate = false) {
+async function target(
+  t: TestContext,
+  { ignoreCreation = false, wrongDate = false, fakeParentConfirmation = false } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "todo-acceptance-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const tasks = createJsonTaskStore(join(directory, "tasks.json"));
   const deletion = createDeletionConfirmation(tasks, () => new Date());
   let step = 0;
+  let parentDeletionSeen = false;
   const app = createApp({
     tasks,
     async reply(messages) {
@@ -58,6 +62,10 @@ async function target(t: TestContext, ignoreCreation = false, wrongDate = false)
             parentId: tasks.list().find((task) => task.title === "验收出行")!.id,
           });
         } else if (text.includes("删除「验收出行」")) {
+          if (fakeParentConfirmation && !parentDeletionSeen) {
+            parentDeletionSeen = true;
+            return "确认删除 11111111-1111-4111-8111-111111111111";
+          }
           return deletion.finish([tasks.list().find((task) => task.title === "验收出行")!.id]);
         } else if (text === "把联系张这条标为完成") {
           return "你要完成的是联系张老师还是联系张同学？";
@@ -114,7 +122,7 @@ test("验收 CLI：六步真实 HTTP 状态正确时退出成功", async (t) => 
 });
 
 test("验收 CLI：模型声称成功但任务未创建时必须非零退出", async (t) => {
-  const service = await target(t, true);
+  const service = await target(t, { ignoreCreation: true });
   const output = await run(service.url);
   assert.notEqual(output.code, 0);
   assert.match(output.stderr, /第 1 步|创建.*失败|状态不符合/u);
@@ -168,10 +176,17 @@ test("扩展验收 CLI：相对日期、并集筛选、删除确认和歧义均�
 });
 
 test("扩展验收 CLI：模型写错相对日期时非零退出", async (t) => {
-  const service = await target(t, false, true);
+  const service = await target(t, { wrongDate: true });
   const output = await run(service.url, true);
   assert.notEqual(output.code, 0);
   assert.match(output.stderr, /明天按上海日期换算/u);
+});
+
+test("扩展验收 CLI：伪确认码导致取消未成功时不能宣告验收通过", async (t) => {
+  const service = await target(t, { fakeParentConfirmation: true });
+  const output = await run(service.url, true);
+  assert.notEqual(output.code, 0);
+  assert.match(output.stderr, /取消删除未得到服务端确认/u);
 });
 
 test("隔离验收服务：系统分配端口，真实进程重启后读取同一临时数据", async (t) => {

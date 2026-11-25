@@ -186,7 +186,10 @@ async function extended(check: ReturnType<typeof tester>) {
 
   await check.say("帮我记一条父任务：验收出行");
   const parent = (await check.list()).find((task) => task.title === "验收出行");
-  assert.ok(parent);
+  assert.ok(
+    parent,
+    "父任务「验收出行」未实际创建；当前任务：" + JSON.stringify(state(await check.list())),
+  );
   await check.say("给「验收出行」添加子任务「验收买票」");
   const child = (await check.list()).find((task) => task.title === "验收买票");
   assert.ok(child);
@@ -194,7 +197,8 @@ async function extended(check: ReturnType<typeof tester>) {
   const beforeParent = await check.list();
   const parentCode = codeOf(await check.say("删除「验收出行」"));
   assert.deepEqual(await check.list(), beforeParent, "父子删除确认前不能落盘");
-  await check.say("取消删除 " + parentCode);
+  const canceled = await check.say("取消删除 " + parentCode);
+  assert.match(canceled, /已取消删除/u, "取消删除未得到服务端确认");
   assert.deepEqual(await check.list(), beforeParent, "取消后任务不变");
   const retryCode = codeOf(await check.say("现在删除「验收出行」"));
   assert.notEqual(retryCode, parentCode);

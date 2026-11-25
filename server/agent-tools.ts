@@ -30,7 +30,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "add_tasks",
       description:
-        "新增一条或多条任务；一句话里有多条任务时一次传入 titles 数组。可附带到期日、优先级、工作量或父任务。",
+        "实际创建普通任务、父任务或子任务。新建父任务同样必须调用本工具且不传 parentId；子任务传入已有父任务 id。一句话多条任务时传入 titles 数组。可附带到期日、优先级和工作量。",
       parameters: {
         type: "object",
         properties: {
@@ -89,25 +89,9 @@ export const AGENT_TOOLS = [
   {
     type: "function",
     function: {
-      name: "delete_task",
+      name: "prepare_deletion",
       description:
-        "登记一条删除请求，id 必须来自 list_tasks。本轮结束后服务端决定直接删除或请求确认；工具不直接删除。",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "任务 id" },
-          cascade: { type: "boolean", description: "兼容旧参数；不能代替用户确认，也不授权删除" },
-        },
-        required: ["id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "delete_tasks",
-      description:
-        "登记批量删除请求，ids 必须来自 list_tasks。服务端在本轮结束后请求用户确认，工具不直接删除。",
+        "准备删除普通任务、父任务或多条任务，只登记待删除 id，本工具本身绝不删除数据。因此无需先取得用户确认就能调用；父任务或批量操作必须先调用本工具，执行端随后才会保存待确认记录并生成确认码。ids 必须来自 list_tasks。",
       parameters: {
         type: "object",
         properties: {
@@ -308,6 +292,7 @@ export function executeTool(
       return success({ task: updated, summary: summary() });
     }
 
+    case "prepare_deletion":
     case "delete_task":
     case "delete_tasks": {
       let ids: string[];

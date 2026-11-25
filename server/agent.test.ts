@@ -605,3 +605,98 @@ test("真实 SDK 请求显式关闭思考，使不携带 reasoning_content 的�
     [{ title: "洗衣服", done: false }],
   );
 });
+
+test("模型生成伪确认码时重走工具，最终只展示服务端可执行的确认码", async (t) => {
+  const store = await newStore(t);
+  const parent = store.create("验收出行");
+  store.create("买票", { parentId: parent.id });
+  const fake = "11111111-1111-4111-8111-111111111111";
+  const client = scriptedClient(
+    [
+      finalText("请回复：确认删除 " + fake),
+      toolCall("list", "list_tasks", "{}"),
+      toolCall("delete", "delete_task", JSON.stringify({ id: parent.id })),
+      finalText("已登记"),
+    ],
+    store,
+  );
+  const agent = createAgent({ tasks: store, client });
+  const answer = await agent.reply([{ role: "user", content: "删除验收出行" }]);
+  const code = confirmationCode(answer);
+  assert.notEqual(code, fake);
+  assert.equal(store.list().length, 2);
+  await agent.reply([{ role: "user", content: "确认删除 " + code }]);
+  assert.deepEqual(store.list(), []);
+});
+
+test("模型反复伪造确认码时达到上限返回失败，既不展示伪码也不删除", async (t) => {
+  const store = await newStore(t);
+  const parent = store.create("出行");
+  store.create("买票", { parentId: parent.id });
+  const fake = "11111111-1111-4111-8111-111111111111";
+  const client = scriptedClient(
+    Array.from({ length: 6 }, () => finalText("确认删除 " + fake)),
+    store,
+  );
+  const answer = await createAgent({ tasks: store, client }).reply([
+    { role: "user", content: "删除出行" },
+  ]);
+  assert.match(answer, /稍后再试|重试/u);
+  assert.ok(!answer.includes(fake));
+  assert.equal(store.list().length, 2);
+});
+
+test("prepare_deletion 为父子任务生成真实待确认记录，用户确认后才删除", async (t) => {
+  const store = await newStore(t);
+  const parent = store.create("出行");
+  store.create("买票", { parentId: parent.id });
+  const client = scriptedClient(
+    [
+      toolCall("prepare", "prepare_deletion", JSON.stringify({ ids: [parent.id] })),
+      finalText("已准备删除"),
+    ],
+    store,
+  );
+  const agent = createAgent({ tasks: store, client });
+  const answer = await agent.reply([{ role: "user", content: "删除出行" }]);
+  const code = confirmationCode(answer);
+  assert.equal(store.list().length, 2);
+  assert.match(await agent.reply([{ role: "user", content: "确认删除 " + code }]), /已删除 2/u);
+  assert.deepEqual(store.list(), []);
+});
+
+test("准备删除 id 错误时回填错误，模型重新查询并使用真实 id 后可完成", async (t) => {
+  const store = await newStore(t);
+  const task = store.create("取快递");
+  const client = scriptedClient(
+    [
+      toolCall("wrong", "prepare_deletion", '{"ids":["task-2"]}'),
+      toolCall("refresh", "list_tasks", "{}"),
+      toolCall("correct", "prepare_deletion", JSON.stringify({ ids: [task.id] })),
+      finalText("已准备"),
+    ],
+    store,
+  );
+  const answer = await createAgent({ tasks: store, client }).reply([
+    { role: "user", content: "取快递这条删掉吧" },
+  ]);
+  assert.match(answer, /已删除 1/u);
+  assert.deepEqual(store.list(), []);
+});
+
+test("删除准备出错后清空旧计划，只执行重新明确登记的范围", async (t) => {
+  const store = await newStore(t);
+  const a = store.create("A");
+  const b = store.create("B");
+  const client = scriptedClient(
+    [
+      toolCall("old", "prepare_deletion", JSON.stringify({ ids: [a.id] })),
+      toolCall("invalid", "prepare_deletion", '{"ids":["missing"]}'),
+      toolCall("new", "prepare_deletion", JSON.stringify({ ids: [b.id] })),
+      finalText("已准备"),
+    ],
+    store,
+  );
+  await createAgent({ tasks: store, client }).reply([{ role: "user", content: "删除 B" }]);
+  assert.deepEqual(store.list(), [a]);
+});
