@@ -50,3 +50,42 @@ test("上海跨日后今天任务自动转到逾期组", () => {
     /已逾期（1）/u,
   );
 });
+
+test("父任务显示完整孩子进度，同组孩子缩进，跨组标注父名且不重复计数", () => {
+  const tasks = [
+    item("子未完成", { parentId: "父" }),
+    item("父"),
+    item("子完成", { parentId: "父", done: true }),
+  ];
+  const text = summaryOf(tasks, now);
+  assert.match(text, /⬜ 父 · 1\/2 已完成\n  ⬜ 子未完成/u);
+  assert.match(text, /  ✅ 子完成.*父任务：父/u);
+  assert.match(text, /共 3 项，未完成 2 项/u);
+});
+
+test("筛选只显示子任务时使用完整上下文统计，不增加父行或其他孩子", () => {
+  const all = [
+    item("父"),
+    item("可见", { parentId: "父" }),
+    item("隐藏", { parentId: "父", done: true }),
+  ];
+  const text = summaryOf([all[1]], now, all);
+  assert.match(text, /共 1 项，未完成 1 项/u);
+  assert.match(text, /  ⬜ 可见.*父任务：父/u);
+  assert.ok(!text.includes("隐藏"));
+  const parent = summaryOf([all[0]], now, all);
+  assert.match(parent, /1\/2 已完成/u);
+});
+
+test("历史循环与孤儿关系展示每条一次并安全结束", () => {
+  const tasks = [
+    item("A", { parentId: "B" }),
+    item("B", { parentId: "A" }),
+    item("孤儿", { parentId: "不存在" }),
+  ];
+  const text = summaryOf(tasks, now);
+  assert.equal(text.match(/⬜ A/g)?.length, 1);
+  assert.equal(text.match(/⬜ B/g)?.length, 1);
+  assert.equal(text.match(/⬜ 孤儿/g)?.length, 1);
+  assert.match(text, /父任务不在清单中/u);
+});

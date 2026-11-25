@@ -218,7 +218,8 @@ function executeValidatedTool(
         }
       }
       const today = todayISO(now);
-      let tasks = store.list();
+      const allTasks = store.list();
+      let tasks = allTasks;
       if (raw.filter === "pending") tasks = tasks.filter((task) => !task.done);
       if (raw.filter === "done") tasks = tasks.filter((task) => task.done);
       if (raw.dueToday || raw.overdue) {
@@ -231,7 +232,7 @@ function executeValidatedTool(
       }
       // 未完成置顶，方便模型与用户一眼看出待处理项。
       tasks = [...tasks.filter((task) => !task.done), ...tasks.filter((task) => task.done)];
-      return success({ tasks, summary: summaryOf(tasks, now) });
+      return success({ tasks, summary: summaryOf(tasks, now, allTasks) });
     }
 
     case "add_tasks": {
