@@ -152,7 +152,8 @@ h1 {
 .list-heading {
   font-weight: 650;
   color: #1f2d44;
-  display: inline-block;
+  display: block;
+  white-space: normal;
   margin-top: 10px;
   padding: 2px 8px;
   border-left: 3px solid #3452b3;

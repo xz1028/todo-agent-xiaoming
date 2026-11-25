@@ -181,8 +181,8 @@ test("扩展2：add_tasks 写入 priority 与 effort（workload 别名）", asyn
   const listed = JSON.parse(executeTool("list_tasks", "{}", store, frozenNow)) as {
     summary: string;
   };
-  assert.match(listed.summary, /优先级 high/);
-  assert.match(listed.summary, /工作量 large/);
+  assert.match(listed.summary, /优先级 高/);
+  assert.match(listed.summary, /工作量 大/);
   assert.match(listed.summary, /明天|截止 2026-11-26|今天到期|已逾期/);
 });
 

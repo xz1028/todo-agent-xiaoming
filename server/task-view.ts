@@ -14,8 +14,12 @@ function taskLine(task: Task, today: string, children: Task[], parentLabel?: str
     if (!task.done && task.dueDate === today) tags.push("今天到期");
     tags.push(`截止 ${task.dueDate}`);
   }
-  if (task.priority) tags.push(`优先级 ${task.priority}`);
-  if (task.workload) tags.push(`工作量 ${task.workload}`);
+  if (task.priority)
+    tags.push(`优先级 ${{ high: "高", medium: "中", low: "低" }[task.priority] ?? task.priority}`);
+  if (task.workload)
+    tags.push(
+      `工作量 ${{ small: "小", medium: "中", large: "大" }[task.workload] ?? task.workload}`,
+    );
   if (task.parentId) tags.push("子任务");
   if (parentLabel) tags.push(parentLabel);
   return `${task.done ? "✅" : "⬜"} ${task.title}${tags.length ? " · " + tags.join(" · ") : ""}`;
