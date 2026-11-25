@@ -152,6 +152,11 @@ h1 {
 .list-heading {
   font-weight: 650;
   color: #1f2d44;
+  display: inline-block;
+  margin-top: 10px;
+  padding: 2px 8px;
+  border-left: 3px solid #3452b3;
+  background: #f0f3fb;
 }
 .task-pending {
   color: #16223a;
@@ -160,6 +165,11 @@ h1 {
   color: #7d899c;
   text-decoration: line-through;
   text-decoration-color: #aab5c6;
+}
+.task-overdue {
+  color: #a33221;
+  text-decoration: underline dotted #cb9187;
+  text-underline-offset: 4px;
 }
 .compose {
   padding: 12px 0 max(18px, env(safe-area-inset-bottom));

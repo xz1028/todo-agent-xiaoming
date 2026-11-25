@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { summaryOf, todayISO } from "./task-view.ts";
+export { summaryOf } from "./task-view.ts";
 import { TaskRelationError, type Task, type TaskChanges, type TaskStore } from "./task-store.ts";
 
 /** OpenAI function calling 所需的工具定义（最小接口，不依赖具体 SDK 类型）。 */
@@ -172,35 +174,6 @@ function attributes(args: JsonObject): { changes: TaskChanges; error?: string } 
     changes.parentId = args.parentId;
   }
   return { changes };
-}
-
-function todayISO(now: () => Date): string {
-  return now().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
-}
-
-/** 单任务行：状态标记 + 属性标签；未完成排在前面由调用方保证。 */
-function taskLine(task: Task, today: string): string {
-  const tags: string[] = [];
-  if (task.dueDate) {
-    if (task.done) tags.push(`截止 ${task.dueDate}`);
-    else if (task.dueDate < today) tags.push("已逾期");
-    else if (task.dueDate === today) tags.push("今天到期");
-    else tags.push(`截止 ${task.dueDate}`);
-  }
-  if (task.priority) tags.push(`优先级 ${task.priority}`);
-  if (task.workload) tags.push(`工作量 ${task.workload}`);
-  if (task.parentId) tags.push("子任务");
-  const suffix = tags.length ? ` · ${tags.join(" · ")}` : "";
-  return `${task.done ? "✅" : "⬜"} ${task.title}${suffix}`;
-}
-
-/** 预格式化摘要：未完成置顶、显示统计与完成状态；供模型直接引用。 */
-export function summaryOf(tasks: Task[], now: () => Date = () => new Date()): string {
-  const pending = tasks.filter((task) => !task.done);
-  const ordered = [...pending, ...tasks.filter((task) => task.done)];
-  const today = todayISO(now);
-  const lines = ordered.map((task) => taskLine(task, today));
-  return `共 ${tasks.length} 项，未完成 ${pending.length} 项。${lines.length ? `\n${lines.join("\n")}` : ""}`;
 }
 
 /** 参数与关系校验失败回填结构化 JSON；存储等异常由 agent 统一兜底。 */

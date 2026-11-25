@@ -25,7 +25,9 @@ function MessageBody({ content }: { content: string }) {
           : /^\s*[✅☑]/u.test(line)
             ? "task-done"
             : /^\s*[⬜☐]/u.test(line)
-              ? "task-pending"
+              ? / · 已逾期(?: ·|$)/u.test(line)
+                ? "task-pending task-overdue"
+                : "task-pending"
               : "";
         return (
           <span key={index} className={className}>
