@@ -148,6 +148,19 @@ h1 {
   border-color: #dce5ff;
   border-radius: 16px 4px 16px 16px;
 }
+/* 清单回复的状态视觉分层：标题醒目、待办正常、已完成弱化。 */
+.list-heading {
+  font-weight: 650;
+  color: #1f2d44;
+}
+.task-pending {
+  color: #16223a;
+}
+.task-done {
+  color: #7d899c;
+  text-decoration: line-through;
+  text-decoration-color: #aab5c6;
+}
 .compose {
   padding: 12px 0 max(18px, env(safe-area-inset-bottom));
 }
