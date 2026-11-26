@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { recentMessages } from "../shared/chat-history.ts";
 import { api, requestReply, waitForReceipt } from "./chat-client.ts";
+import { retainedMessages, type PendingRequest } from "./session.ts";
 import {
-  loadSession,
-  retainedMessages,
-  saveSession,
-  type PendingRequest,
-  type SavedSession,
-} from "./session.ts";
+  activeConversation,
+  loadConversations,
+  saveConversations,
+  newConversation,
+  switchConversation,
+  renameConversation,
+  deleteConversation,
+  restoreConversation,
+  updateConversationSession,
+  finishConversationRequest,
+  type ConversationHistory,
+} from "./conversations.ts";
+import { ConversationList } from "./ConversationList.tsx";
 import { ChatHistory } from "./ChatHistory.tsx";
 import { TaskPanel } from "./TaskPanel.tsx";
 
@@ -17,36 +25,67 @@ function isSendShortcut(event: KeyboardEvent<HTMLTextAreaElement>) {
 }
 
 export default function App() {
-  const [session, setSession] = useState(loadSession);
-  const current = useRef(session);
+  const [initial] = useState(loadConversations);
+  const [history, setHistory] = useState(initial.history);
+  const current = useRef(history);
+  const conversation = activeConversation(history);
+  const session = conversation.session;
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const drafts = useRef(new Map<string, string>());
   const [pending, setPending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState("");
-  const [storageWarning, setStorageWarning] = useState(false);
+  const [storageWarning, setStorageWarning] = useState(initial.warning ?? "");
   const [revision, setRevision] = useState(0);
   const [tab, setTab] = useState<"chat" | "tasks">("chat");
   const input = useRef<HTMLTextAreaElement>(null);
   const locked = useRef(false);
   const recovered = useRef(false);
-  function commit(next: SavedSession) {
+  function commit(next: ConversationHistory) {
     current.current = next;
-    setSession(next);
-    setStorageWarning(!saveSession(next));
+    setHistory(next);
+    setStorageWarning(
+      saveConversations(next)
+        ? ""
+        : "浏览器未能保存历史对话，请先保留当前页面；旧的已保存记录仍在。",
+    );
   }
-  function complete(request: PendingRequest, answer: string) {
-    if (current.current.request?.requestId !== request.requestId) return;
-    commit({
-      version: 1,
-      messages: retainedMessages([
-        ...current.current.messages,
-        { role: "assistant", content: answer },
-      ]),
-    });
+  function complete(request: PendingRequest, answer: string, conversationId: string) {
+    const next = finishConversationRequest(
+      current.current,
+      conversationId,
+      request.requestId,
+      answer,
+    );
+    if (next === current.current) return;
+    commit(next);
     setRevision((value) => value + 1);
   }
-  async function execute(request: PendingRequest, recover = false) {
+  function changeConversation(
+    action: (history: ConversationHistory) => ConversationHistory,
+    close = true,
+  ) {
+    if (locked.current) return;
+    try {
+      const previousId = current.current.activeId;
+      const next = action(current.current);
+      commit(next);
+      if (next.activeId !== previousId) {
+        drafts.current.set(previousId, draft);
+        setDraft(drafts.current.get(next.activeId) ?? "");
+      }
+      setError("");
+      if (close) {
+        setHistoryOpen(false);
+        setTab("chat");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "无法更新会话。");
+    }
+  }
+  async function execute(request: PendingRequest, conversationId: string, recover = false) {
     if (locked.current) return;
     locked.current = true;
     setPending(true);
@@ -56,7 +95,7 @@ export default function App() {
       const answer = recover
         ? await waitForReceipt(request.requestId)
         : await requestReply(request);
-      complete(request, answer);
+      complete(request, answer, conversationId);
     } catch (cause) {
       setError(
         (cause instanceof Error ? cause.message : "连接中断。") +
@@ -73,7 +112,8 @@ export default function App() {
   useEffect(() => {
     if (!recovered.current) {
       recovered.current = true;
-      if (current.current.request) void execute(current.current.request, true);
+      const item = activeConversation(current.current);
+      if (item.session.request) void execute(item.session.request, item.id, true);
     }
   }, []);
   useEffect(() => {
@@ -83,15 +123,17 @@ export default function App() {
   }, [pending]);
   async function send(text: string) {
     const content = text.trim();
-    if (!content || locked.current || current.current.request) return;
-    const messages = retainedMessages([...current.current.messages, { role: "user", content }]);
+    const item = activeConversation(current.current);
+    if (!content || locked.current || item.session.request) return;
+    const messages = retainedMessages([...item.session.messages, { role: "user", content }]);
     const request = { requestId: crypto.randomUUID(), messages: recentMessages(messages) };
-    commit({ version: 1, messages, request });
+    commit(updateConversationSession(current.current, item.id, { version: 1, messages, request }));
+    drafts.current.delete(item.id);
     setDraft("");
-    await execute(request);
+    await execute(request, item.id);
   }
   async function stop() {
-    const request = current.current.request;
+    const request = activeConversation(current.current).session.request;
     if (!request) return;
     setStopping(true);
     try {
@@ -107,13 +149,18 @@ export default function App() {
         <img src="/logo.png" alt="" />
         <strong>TokeNow</strong>
         <span>小明智能体</span>
-        <button
-          className="quiet header-action"
-          disabled={pending || !!session.request}
-          onClick={() => commit({ version: 1, messages: [] })}
-        >
-          新对话
-        </button>
+        <div className="header-actions">
+          <button className="quiet" onClick={() => setHistoryOpen(true)}>
+            历史对话
+          </button>
+          <button
+            className="quiet"
+            disabled={pending || !!session.request}
+            onClick={() => changeConversation(newConversation)}
+          >
+            新对话
+          </button>
+        </div>
       </header>
       <nav className="mobile-tabs" aria-label="工作区">
         <button aria-pressed={tab === "chat"} onClick={() => setTab("chat")}>
@@ -123,8 +170,25 @@ export default function App() {
           任务清单
         </button>
       </nav>
+      <ConversationList
+        open={historyOpen}
+        history={history}
+        disabled={pending || !!session.request}
+        onClose={() => setHistoryOpen(false)}
+        onNew={() => changeConversation(newConversation)}
+        onSelect={(id) => changeConversation((value) => switchConversation(value, id))}
+        onRename={(id, title) =>
+          changeConversation((value) => renameConversation(value, id, title), false)
+        }
+        onDelete={(id) => changeConversation((value) => deleteConversation(value, id), false)}
+        onRestore={(id) => changeConversation((value) => restoreConversation(value, id))}
+      />
       <div className="workspace">
         <main className={tab === "chat" ? "chat-pane active" : "chat-pane"}>
+          <div className="conversation-heading">
+            <h2>{conversation.title}</h2>
+            <span>当前会话</span>
+          </div>
           <ChatHistory
             messages={session.messages}
             pending={pending}
@@ -134,7 +198,7 @@ export default function App() {
           <div className="compose">
             {storageWarning && (
               <p className="error" role="status">
-                浏览器未能保存对话，刷新后可能无法恢复。本次请求可在当前页面继续处理。
+                {storageWarning}
               </p>
             )}
             {error && (
@@ -144,8 +208,12 @@ export default function App() {
             )}
             {session.request && !pending && (
               <div className="recovery-actions">
-                <button onClick={() => void execute(session.request!, true)}>读取本次回执</button>
-                <button onClick={() => void execute(session.request!)}>重试同一请求</button>
+                <button onClick={() => void execute(session.request!, conversation.id, true)}>
+                  读取本次回执
+                </button>
+                <button onClick={() => void execute(session.request!, conversation.id)}>
+                  重试同一请求
+                </button>
               </div>
             )}
             <form

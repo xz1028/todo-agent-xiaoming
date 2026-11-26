@@ -552,3 +552,233 @@ button:disabled,
     padding: 20px 16px;
   }
 }
+
+/* 历史会话使用原生模态面板，保留焦点约束和 Escape 关闭。 */
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.conversation-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid #e7ebf3;
+  background: #ffffff80;
+}
+.conversation-heading h2 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 550;
+  color: #405574;
+}
+.conversation-heading > span {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #8491a5;
+}
+.conversation-dialog {
+  width: min(560px, calc(100% - 28px));
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  border: 1px solid #dce3ef;
+  border-radius: 18px;
+  color: #192538;
+  background: #f8f9fc;
+  box-shadow: 0 24px 90px #14233d3b;
+}
+.conversation-dialog::backdrop {
+  background: #15243c66;
+}
+.history-shell {
+  padding: 22px;
+}
+.history-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.history-top h2 {
+  margin: 5px 0 0;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+.history-toolbar {
+  display: grid;
+  gap: 12px;
+}
+.history-toolbar input,
+.rename-conversation input {
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+  border: 1px solid #ccd7e8;
+  border-radius: 9px;
+  color: #334a68;
+  background: white;
+}
+.history-new {
+  padding: 11px;
+  border: 0;
+  border-radius: 9px;
+  background: #1643c4;
+  color: white;
+}
+.history-tabs {
+  display: flex;
+  gap: 7px;
+}
+.history-tabs button {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #60718a;
+  font-size: 12px;
+}
+.history-tabs button[aria-pressed="true"] {
+  background: #e8effc;
+  border-color: #c8d7f3;
+  color: #1643b4;
+}
+.conversation-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+}
+.conversation-row {
+  margin: 8px 0;
+  padding: 4px;
+  border: 1px solid #dce3ef;
+  border-radius: 11px;
+  background: white;
+}
+.conversation-row.selected {
+  border-color: #a8bee9;
+  box-shadow: inset 3px 0 #315fc4;
+}
+.conversation-select {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  width: 100%;
+  padding: 10px 12px 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.conversation-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.conversation-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #697b94;
+}
+.conversation-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: #8390a5;
+}
+.conversation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 0 8px 6px;
+}
+.conversation-actions button,
+.rename-conversation button {
+  border: 1px solid #dce3ef;
+  border-radius: 6px;
+  background: white;
+  color: #516582;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.history-hint,
+.history-footer,
+.history-empty {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #667891;
+}
+.history-hint {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #fff5df;
+  color: #8a6630;
+}
+.history-empty {
+  padding: 24px 10px;
+  text-align: center;
+}
+.history-footer {
+  border-top: 1px solid #e1e7f1;
+  padding-top: 13px;
+  font-size: 11px;
+}
+.rename-conversation {
+  display: grid;
+  padding: 12px;
+  margin: 0;
+  border: 0;
+  box-shadow: none;
+}
+.rename-conversation label {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  font-size: 12px;
+  color: #526785;
+}
+.rename-conversation > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.rename-conversation button {
+  padding: 7px 11px;
+}
+@media (max-width: 600px) {
+  header {
+    padding: 0 12px;
+    gap: 8px;
+  }
+  header > span {
+    display: none;
+  }
+  header strong {
+    font-size: 17px;
+  }
+  .header-actions {
+    gap: 5px;
+  }
+  .header-actions button {
+    padding: 7px 8px;
+    font-size: 12px;
+  }
+  .history-shell {
+    padding: 16px;
+  }
+  .conversation-heading {
+    padding: 10px 16px;
+  }
+}

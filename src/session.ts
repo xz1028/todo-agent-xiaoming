@@ -10,6 +10,12 @@ export interface SavedSession {
   request?: PendingRequest;
 }
 const key = "xiaoming.chat.v1";
+export function isUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[a-f\d]{8}-[a-f\d]{4}-[1-8][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/iu.test(value)
+  );
+}
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -27,29 +33,28 @@ function validMessages(value: unknown, max: number): value is ChatMessage[] {
     )
   );
 }
+export function parseSavedSession(value: unknown): SavedSession | undefined {
+  if (!isObject(value) || value.version !== 1 || !validMessages(value.messages, 100)) return;
+  let request: PendingRequest | undefined;
+  if (value.request !== undefined) {
+    const pending = value.request;
+    if (
+      !isObject(pending) ||
+      !isUuid(pending.requestId) ||
+      !validMessages(pending.messages, 200) ||
+      pending.messages.at(-1)?.role !== "user"
+    )
+      return;
+    request = { requestId: pending.requestId, messages: pending.messages };
+  }
+  return { version: 1, messages: value.messages, ...(request ? { request } : {}) };
+}
 export function loadSession(storage?: Pick<Storage, "getItem">): SavedSession {
   try {
     const raw = (storage ?? localStorage).getItem(key);
     if (raw) {
-      const value: unknown = JSON.parse(raw);
-      if (isObject(value) && value.version === 1 && validMessages(value.messages, 100)) {
-        let request: PendingRequest | undefined;
-        if (value.request !== undefined) {
-          const pending = value.request;
-          if (
-            !isObject(pending) ||
-            typeof pending.requestId !== "string" ||
-            !/^[a-f\d]{8}-[a-f\d]{4}-[1-8][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/iu.test(
-              pending.requestId,
-            ) ||
-            !validMessages(pending.messages, 200) ||
-            pending.messages.at(-1)?.role !== "user"
-          )
-            throw new Error("无效请求记录");
-          request = { requestId: pending.requestId, messages: pending.messages };
-        }
-        return { version: 1, messages: value.messages, ...(request ? { request } : {}) };
-      }
+      const result = parseSavedSession(JSON.parse(raw));
+      if (result) return result;
     }
   } catch {
     /* 历史损坏或浏览器禁用存储时仍可使用聊天。 */
