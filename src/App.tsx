@@ -18,6 +18,7 @@ import {
 import { ConversationList } from "./ConversationList.tsx";
 import { ChatHistory } from "./ChatHistory.tsx";
 import { TaskPanel } from "./TaskPanel.tsx";
+import { ThemeSelector } from "./ThemeSelector.tsx";
 
 function isSendShortcut(event: KeyboardEvent<HTMLTextAreaElement>) {
   const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
@@ -150,6 +151,7 @@ export default function App() {
         <strong>TokeNow</strong>
         <span>小明智能体</span>
         <div className="header-actions">
+          <ThemeSelector />
           <button className="quiet" onClick={() => setHistoryOpen(true)}>
             历史对话
           </button>

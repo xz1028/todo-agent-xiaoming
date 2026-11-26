@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f8f9fc" />
     <link rel="icon" href="/logo.png" />
+    <script>
+      (() => {
+        let theme = "system";
+        try {
+          const saved = localStorage.getItem("xiaoming.theme.v1");
+          if (saved === "light" || saved === "dark") theme = saved;
+        } catch {}
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="/style.css" />
     <title>小明智能体 · TokeNow</title>
   </head>
