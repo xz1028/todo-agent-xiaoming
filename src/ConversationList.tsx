@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { displayMessage, displayConversationTitle } from "./message-display.ts";
 import type { ConversationHistory } from "./conversations.ts";
 
 interface Props {
@@ -58,7 +59,11 @@ export function ConversationList({
         : item.deletedAt === undefined &&
           (item.session.messages.length || item.customTitle || item.session.request),
     )
-    .filter((item) => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+    .filter((item) =>
+      displayConversationTitle(item)
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase()),
+    )
     .toSorted((a, b) => (b.deletedAt ?? b.updatedAt) - (a.deletedAt ?? a.updatedAt));
   const content = (
     <div className="history-shell">
@@ -176,12 +181,14 @@ export function ConversationList({
                   className="conversation-select"
                   disabled={disabled || removed}
                   aria-current={history.activeId === item.id && !removed ? "true" : undefined}
-                  aria-label={"打开会话：" + item.title}
+                  aria-label={"打开会话：" + displayConversationTitle(item)}
                   onClick={() => onSelect(item.id)}
                 >
-                  <span className="conversation-name">{item.title}</span>
+                  <span className="conversation-name">{displayConversationTitle(item)}</span>
                   <span className="conversation-preview">
-                    {item.session.messages.at(-1)?.content.slice(0, 80) ?? "暂无消息"}
+                    {displayMessage(
+                      item.session.messages.at(-1) ?? { role: "assistant", content: "暂无消息" },
+                    ).slice(0, 80)}
                   </span>
                   <span className="conversation-meta">
                     <time dateTime={new Date(item.deletedAt ?? item.updatedAt).toISOString()}>
@@ -200,7 +207,7 @@ export function ConversationList({
                   {removed ? (
                     <button
                       disabled={disabled}
-                      aria-label={"恢复会话：" + item.title}
+                      aria-label={"恢复会话：" + displayConversationTitle(item)}
                       onClick={() => onRestore(item.id)}
                     >
                       恢复并打开
@@ -209,10 +216,10 @@ export function ConversationList({
                     <>
                       <button
                         disabled={disabled}
-                        aria-label={"重命名会话：" + item.title}
+                        aria-label={"重命名会话：" + displayConversationTitle(item)}
                         onClick={() => {
                           setEditing(item.id);
-                          setTitle(item.title);
+                          setTitle(displayConversationTitle(item));
                           setError("");
                         }}
                       >
@@ -220,7 +227,7 @@ export function ConversationList({
                       </button>
                       <button
                         disabled={disabled}
-                        aria-label={"删除会话：" + item.title}
+                        aria-label={"删除会话：" + displayConversationTitle(item)}
                         onClick={() => onDelete(item.id)}
                       >
                         删除

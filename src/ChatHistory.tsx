@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { displayMessage } from "./message-display.ts";
 import type { ChatMessage } from "../shared/chat.ts";
 
 const examplePrompts = [
@@ -73,7 +74,7 @@ export function ChatHistory({
           {messages.map((message, index) => (
             <div key={index} className={`message ${message.role}`}>
               <small>{message.role === "user" ? "你" : "小明智能体"}</small>
-              <MessageBody content={message.content} />
+              <MessageBody content={displayMessage(message)} />
             </div>
           ))}
           {pending && <p role="status">{pendingLabel}</p>}

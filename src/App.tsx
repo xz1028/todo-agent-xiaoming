@@ -18,6 +18,7 @@ import {
 import { ConversationList } from "./ConversationList.tsx";
 import { ChatHistory } from "./ChatHistory.tsx";
 import { TaskPanel } from "./TaskPanel.tsx";
+import { displayConversationTitle } from "./message-display.ts";
 import { ThemeSelector } from "./ThemeSelector.tsx";
 
 function isSendShortcut(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -220,7 +221,7 @@ export default function App() {
         />
         <main className={tab === "chat" ? "chat-pane active" : "chat-pane"}>
           <div className="conversation-heading">
-            <h2>{conversation.title}</h2>
+            <h2>{displayConversationTitle(conversation)}</h2>
             <span>当前会话</span>
           </div>
           <ChatHistory

@@ -157,7 +157,7 @@ test("真实消息组件只按行首状态着色，标题里的 emoji 不改变�
     },
   };
   new Function("require", "module", "exports", "React", code)(
-    createRequire(import.meta.url),
+    createRequire(new URL("../src/ChatHistory.tsx", import.meta.url)),
     compiled,
     compiled.exports,
     React,

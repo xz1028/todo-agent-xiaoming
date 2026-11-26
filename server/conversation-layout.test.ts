@@ -15,7 +15,7 @@ const { code } = transformSync(
 );
 const compiled = { exports: {} as { ConversationList: React.ComponentType<Props> } };
 new Function("require", "module", "exports", "React", code)(
-  createRequire(import.meta.url),
+  createRequire(new URL("../src/ConversationList.tsx", import.meta.url)),
   compiled,
   compiled.exports,
   React,
