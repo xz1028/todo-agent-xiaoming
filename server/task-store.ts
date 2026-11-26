@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
@@ -61,7 +61,41 @@ function validateParent(tasks: Task[], id: string, parentId: string | undefined)
 const storedTask = z.looseObject({ id: z.string(), title: z.string(), done: z.boolean() });
 const taskList = z.array(storedTask) as z.ZodType<Task[]>;
 
+export interface TrashEntry {
+  id: string;
+  deletedAt: string;
+  tasks: Task[];
+}
+export interface ImportPreview {
+  added: number;
+  skipped: number;
+  token: string;
+}
+const envelopeSchema = z.object({
+  version: z.literal(1),
+  tasks: taskList,
+  trash: z.array(z.object({ id: z.string(), deletedAt: z.string(), tasks: taskList })),
+});
+const importList = z
+  .array(
+    z.looseObject({
+      id: z.string().min(1).max(200),
+      title: z.string().trim().min(1).max(200),
+      done: z.boolean(),
+      dueDate: z.iso.date().optional(),
+      priority: z.enum(priorities).optional(),
+      workload: z.enum(workloads).optional(),
+      effort: z.enum(workloads).optional(),
+      parentId: z.string().min(1).optional(),
+    }),
+  )
+  .max(1000);
+
 export interface TaskStore {
+  trash(): TrashEntry[];
+  restore(id: string): Task[];
+  previewImport(input: unknown): ImportPreview;
+  importTasks(input: unknown, token: string): ImportPreview;
   list(): Task[];
   create(title: string, attrs?: TaskChanges): Task;
   update(id: string, changes: TaskChanges): Task | undefined;
@@ -91,17 +125,65 @@ function syncParents(tasks: Task[], parentId?: string, sourceId?: string) {
 }
 
 export function createJsonTaskStore(filename: string): TaskStore {
+  function readState(): { version: 1; tasks: Task[]; trash: TrashEntry[] } {
+    if (!existsSync(filename)) return { version: 1, tasks: [], trash: [] };
+    const value: unknown = JSON.parse(readFileSync(filename, "utf8"));
+    return Array.isArray(value)
+      ? { version: 1, tasks: taskList.parse(value), trash: [] }
+      : envelopeSchema.parse(value);
+  }
   function list(): Task[] {
-    if (!existsSync(filename)) return [];
-    return taskList.parse(JSON.parse(readFileSync(filename, "utf8")));
+    return readState().tasks;
   }
 
-  // 同一服务进程内同步完成读写；替换文件前，原清单始终完整可读。
-  function save(tasks: Task[]) {
+  // 任务与回收记录原子提交；兼容旧数组，并保留上一份完整文件备份。
+  function save(tasks: Task[], trash = readState().trash) {
     mkdirSync(dirname(filename), { recursive: true });
     const temporary = filename + ".tmp";
-    writeFileSync(temporary, JSON.stringify(tasks, null, 2) + "\n");
+    writeFileSync(temporary, JSON.stringify({ version: 1, tasks, trash }, null, 2) + "\n", {
+      mode: 0o600,
+    });
+    if (existsSync(filename)) {
+      writeFileSync(filename + ".bak.tmp", readFileSync(filename), { mode: 0o600 });
+      renameSync(filename + ".bak.tmp", filename + ".bak");
+    }
     renameSync(temporary, filename);
+  }
+
+  function prepareImport(input: unknown) {
+    const parsed = importList.safeParse(input);
+    if (!parsed.success) throw new TaskRelationError("导入格式无效：请提供最多1000条合法任务。");
+    if (
+      parsed.data.some(
+        (task) =>
+          task.effort !== undefined && task.workload !== undefined && task.effort !== task.workload,
+      )
+    )
+      throw new TaskRelationError("导入effort/workload冲突，未写入数据。");
+    const incoming: Task[] = parsed.data.map(({ effort, ...task }) => ({
+      ...task,
+      ...(effort !== undefined && task.workload === undefined ? { workload: effort } : {}),
+    }));
+    if (new Set(incoming.map((task) => task.id)).size !== incoming.length)
+      throw new TaskRelationError("导入文件含重复ID。");
+    const current = list();
+    const byId = new Map(current.map((task) => [task.id, task]));
+    const added: Task[] = [];
+    let skipped = 0;
+    const canonical = (task: Task) =>
+      JSON.stringify(Object.entries(task).sort(([a], [b]) => a.localeCompare(b)));
+    for (const task of incoming) {
+      const existing = byId.get(task.id);
+      if (existing) {
+        if (canonical(existing) !== canonical(task))
+          throw new TaskRelationError("导入任务ID与现有任务冲突，未覆盖数据。");
+        skipped += 1;
+      } else added.push(task);
+    }
+    const merged = [...current, ...added];
+    for (const task of added) validateParent(merged, task.id, task.parentId);
+    const token = createHash("sha256").update(JSON.stringify({ current, incoming })).digest("hex");
+    return { merged, added, skipped, token };
   }
 
   function removeMany(ids: string[]): number {
@@ -114,7 +196,12 @@ export function createJsonTaskStore(filename: string): TaskStore {
         tasks.filter((task) => selected.has(task.id)).map((task) => task.parentId),
       );
       for (const parentId of parents) syncParents(remaining, parentId);
-      save(remaining);
+      const entry: TrashEntry = {
+        id: randomUUID(),
+        deletedAt: new Date().toISOString(),
+        tasks: tasks.filter((task) => selected.has(task.id)),
+      };
+      save(remaining, [...readState().trash, entry]);
     }
     return count;
   }
@@ -122,6 +209,39 @@ export function createJsonTaskStore(filename: string): TaskStore {
   return {
     list,
     removeMany,
+    trash() {
+      return readState().trash;
+    },
+    restore(id) {
+      const state = readState();
+      const entry = state.trash.find((item) => item.id === id);
+      if (!entry) throw new TaskRelationError("找不到该回收记录，可能已恢复。");
+      const currentIds = new Set(state.tasks.map((task) => task.id));
+      if (entry.tasks.some((task) => currentIds.has(task.id)))
+        throw new TaskRelationError("恢复任务ID冲突，未覆盖数据。");
+      const merged = [...state.tasks, ...entry.tasks];
+      const ids = new Set(merged.map((task) => task.id));
+      if (entry.tasks.some((task) => task.parentId && !ids.has(task.parentId)))
+        throw new TaskRelationError("请先恢复关联父任务。");
+      for (const task of entry.tasks) syncParents(merged, task.parentId, task.id);
+      save(
+        merged,
+        state.trash.filter((item) => item.id !== id),
+      );
+      return entry.tasks;
+    },
+    previewImport(input) {
+      const { added, skipped, token } = prepareImport(input);
+      return { added: added.length, skipped, token };
+    },
+    importTasks(input, token) {
+      const prepared = prepareImport(input);
+      if (token !== prepared.token)
+        throw new TaskRelationError("清单已变化或预览已过期，请重新预览。");
+      for (const task of prepared.added) syncParents(prepared.merged, task.parentId, task.id);
+      if (prepared.added.length) save(prepared.merged);
+      return { added: prepared.added.length, skipped: prepared.skipped, token: prepared.token };
+    },
 
     create(title, attrs = {}) {
       const task: Task = { id: randomUUID(), title, done: false, ...compact(attrs) };

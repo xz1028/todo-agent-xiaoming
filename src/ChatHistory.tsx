@@ -11,6 +11,7 @@ const examplePrompts = [
 interface ChatHistoryProps {
   messages: ChatMessage[];
   pending: boolean;
+  pendingLabel?: string;
   onSelectPrompt: (prompt: string) => void;
 }
 
@@ -40,7 +41,12 @@ function MessageBody({ content }: { content: string }) {
   );
 }
 
-export function ChatHistory({ messages, pending, onSelectPrompt }: ChatHistoryProps) {
+export function ChatHistory({
+  messages,
+  pending,
+  pendingLabel = "正在回复…",
+  onSelectPrompt,
+}: ChatHistoryProps) {
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
@@ -70,7 +76,7 @@ export function ChatHistory({ messages, pending, onSelectPrompt }: ChatHistoryPr
               <MessageBody content={message.content} />
             </div>
           ))}
-          {pending && <p role="status">正在回复…</p>}
+          {pending && <p role="status">{pendingLabel}</p>}
         </div>
       )}
     </div>

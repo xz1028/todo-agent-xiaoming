@@ -1,10 +1,204 @@
 openapi: 3.1.0
 info:
-  title: 小明智能体任务 API
-  version: 1.1.0
+  title: 小明智能体 API
+  version: 1.2.0
 servers:
   - url: http://127.0.0.1:3000
 paths:
+  /api/chat:
+    post:
+      operationId: chat
+      summary: 发送对话；同requestId和内容重试复用回执
+      description: 同时只处理一个不同编号的请求。整轮45秒，单次模型20秒；取消不回滚已保存操作。旧客户端可省略requestId，但无法跨请求去重。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatRequest" }
+      responses:
+        "200":
+          description: 回复；HTTP成功不代表每个模型操作都成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reply]
+                properties:
+                  reply: { type: string }
+                  requestId: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: 编号内容冲突或另一请求正在运行 }
+  /api/chat/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: chatReceipt
+      summary: 读取请求回执；重启遗留请求为interrupted，不自动重放
+      responses:
+        "200":
+          description: 当前状态与最终回复
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Receipt" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/chat/{id}/cancel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: cancelChat
+      summary: 请求停止，随后读取最终回执
+      responses:
+        "202": { description: 取消信号已发送或请求已经结束 }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/deletion:
+    get:
+      operationId: pendingDeletion
+      summary: 当前有效且快照匹配的删除预览；用于界面确认按钮
+      responses:
+        "200":
+          description: 删除预览或null
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: "null" }
+                  - type: object
+                    required: [code, expiresAt, tasks]
+                    properties:
+                      code: { type: string, format: uuid }
+                      expiresAt: { type: number, description: Unix毫秒时间戳 }
+                      tasks: { type: array, items: { $ref: "#/components/schemas/Task" } }
+  /api/tasks/view:
+    get:
+      operationId: taskView
+      summary: 查询分页任务及分组、父名和完整孩子进度
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: filter, in: query, schema: { type: string, enum: [all, pending, done] } }
+        - {
+            name: offset,
+            in: query,
+            schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 50, default: 20 },
+          }
+        - {
+            name: period,
+            in: query,
+            schema: { type: string, enum: [today, tomorrow, this_week, next_week, this_month] },
+          }
+        - { name: dueFrom, in: query, schema: { type: string, format: date } }
+        - { name: dueTo, in: query, schema: { type: string, format: date } }
+        - { name: dueToday, in: query, schema: { type: boolean } }
+        - { name: overdue, in: query, schema: { type: boolean } }
+        - { name: priority, in: query, schema: { $ref: "#/components/schemas/Priority" } }
+        - { name: effort, in: query, schema: { $ref: "#/components/schemas/Effort" } }
+        - { name: workload, in: query, schema: { $ref: "#/components/schemas/Workload" } }
+        - { name: sort, in: query, schema: { type: string, enum: [priority, dueDate, created] } }
+      responses:
+        "200":
+          description: 本页与匹配总数；日期按Asia/Shanghai计算
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks, total]
+                properties:
+                  total: { type: integer }
+                  nextOffset: { type: integer }
+                  tasks:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: "#/components/schemas/Task" }
+                        - type: object
+                          properties:
+                            group: { type: string, enum: [pending, overdue, done] }
+                            parentTitle: { type: string }
+                            progress:
+                              type: object
+                              properties:
+                                done: { type: integer }
+                                total: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/tasks/trash:
+    get:
+      operationId: taskTrash
+      summary: 按删除批次从新到旧列出可恢复任务
+      responses:
+        "200":
+          description: 回收记录数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, deletedAt, tasks]
+                  properties:
+                    id: { type: string }
+                    deletedAt: { type: string, format: date-time }
+                    tasks: { type: array, items: { $ref: "#/components/schemas/Task" } }
+  /api/tasks/trash/{id}/restore:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: restoreTasks
+      summary: 恢复整批任务，拒绝ID冲突或缺失父任务
+      responses:
+        "200": { description: 已恢复任务数组，位于tasks字段 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/tasks/export:
+    get:
+      operationId: exportTasks
+      summary: 下载活动任务JSON，不包含回收记录
+      responses:
+        "200":
+          description: version1导出对象
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskExport" }
+  /api/tasks/import/preview:
+    post:
+      operationId: previewImport
+      summary: 校验导入及ID冲突，只预览不写入
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskExport" }
+      responses:
+        "200":
+          description: 新增数、跳过数、确认令牌
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/tasks/import:
+    post:
+      operationId: importTasks
+      summary: 确认预览后仅合并新ID，清单变化需重新预览
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/TaskExport" }
+                - type: object
+                  required: [token]
+                  properties:
+                    token: { type: string }
+      responses:
+        "200":
+          description: 导入结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /api/tasks:
     get:
       operationId: listTasks
@@ -79,13 +273,52 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteTask
-      summary: 删除一条任务及其全部后代（含历史深层关系）
+      summary: 将任务及其全部后代移入回收站（含历史深层关系）
       responses:
         "204":
           description: 删除成功，响应体为空
         "404": { $ref: "#/components/responses/NotFound" }
 components:
   schemas:
+    ChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        requestId: { type: string, format: uuid }
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: 最后一项必须为user；模型只使用最近最多24条、约12000字符
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [user, assistant] }
+              content: { type: string, minLength: 1, maxLength: 8000 }
+    Receipt:
+      type: object
+      required: [requestId, state]
+      properties:
+        requestId: { type: string, format: uuid }
+        state: { type: string, enum: [running, done, interrupted] }
+        reply: { type: string }
+    TaskExport:
+      type: object
+      required: [tasks]
+      properties:
+        version: { type: integer, enum: [1] }
+        tasks:
+          type: array
+          description: 导入最多1000项；相同ID内容相同时跳过，不同内容拒绝
+          items: { $ref: "#/components/schemas/Task" }
+    ImportPreview:
+      type: object
+      required: [added, skipped, token]
+      properties:
+        added: { type: integer }
+        skipped: { type: integer }
+        token: { type: string }
     Title:
       type: string
       description: 首尾空白会自动去除，去除后长度应为 1 至 200

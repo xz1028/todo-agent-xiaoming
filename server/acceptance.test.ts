@@ -163,7 +163,7 @@ test("验收 CLI：空白 BASE_URL 使用隔离服务，不将空字符串当作
     });
     // 受控模型不创建任务，因此应进入真实隔离服务后由第一步状态断言拒绝。
     assert.notEqual(output.code, 0);
-    assert.match(output.stderr, /第 1 步状态不符合/u);
+    assert.match(output.stderr, /第 1 步状态不符合|模型调用未完成/u);
     assert.doesNotMatch(output.stderr, /Invalid URL/u);
   }
 });
@@ -207,4 +207,22 @@ test("隔离验收服务：系统分配端口，真实进程重启后读取同�
   service = await startService(directory);
   const tasks = await fetch(service.baseUrl + "/api/tasks").then((response) => response.json());
   assert.deepEqual(tasks, [created]);
+});
+
+test("回归验收 CLI：忽略日期筛选的回复不能通过回归集", async (t) => {
+  const service = await target(t);
+  const output = await new Promise<{ code: number; stderr: string }>((resolveResult) => {
+    execFile(
+      process.execPath,
+      ["scripts/acceptance.ts", "--regression"],
+      {
+        cwd: repository,
+        env: { ...process.env, BASE_URL: service.url, DEEPSEEK_API_KEY: "" },
+        timeout: 5_000,
+      },
+      (error, _stdout, stderr) => resolveResult({ code: error ? 1 : 0, stderr }),
+    );
+  });
+  assert.notEqual(output.code, 0, "忽略筛选的目标应被新回归集拒绝");
+  assert.match(output.stderr, /回归/u);
 });

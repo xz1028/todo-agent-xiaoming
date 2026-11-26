@@ -4,6 +4,7 @@
  * --extended 额外检查相对日期、到期并集、歧义、批量和父子任务确认。
  */
 import assert from "node:assert/strict";
+import { regression } from "./regression.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -192,7 +193,7 @@ async function extended(check: ReturnType<typeof tester>) {
   );
   await check.say("给「验收出行」添加子任务「验收买票」");
   const child = (await check.list()).find((task) => task.title === "验收买票");
-  assert.ok(child);
+  assert.ok(child, "子任务标题未精确保留，当前任务：" + JSON.stringify(await check.list()));
   assert.equal(child.parentId, parent.id);
   const beforeParent = await check.list();
   const parentCode = codeOf(await check.say("删除「验收出行」"));
@@ -251,6 +252,7 @@ async function main() {
       console.log("PASS 实际服务重启后的查询与任务持久化。\n");
     }
     if (process.argv.includes("--extended")) await extended(check);
+    if (process.argv.includes("--regression")) await regression(check);
     console.log(
       "PASS 验收完成。" + (externalUrl ? "外部服务的重启需另行验证。" : "临时进程与数据将清理。"),
     );

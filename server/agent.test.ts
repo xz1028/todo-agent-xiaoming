@@ -785,3 +785,124 @@ test("删除成功时仍告知同轮新增失败", async (t) => {
   assert.match(answer, /已删除 1/u);
   assert.match(answer, /添加失败.*日期/u);
 });
+
+test("整轮截止：模型忽略signal时仍按时返回，已保存操作有明确回执", async (t) => {
+  const tasks = await newStore(t);
+  let calls = 0;
+  const client: ChatClient = {
+    chat: {
+      completions: {
+        async create() {
+          calls += 1;
+          if (calls === 1)
+            return {
+              choices: [
+                {
+                  index: 0,
+                  message: toolCall("add", "add_tasks", '{"titles":["已保存"]}'),
+                  finish_reason: "tool_calls",
+                },
+              ],
+            };
+          return new Promise(() => {});
+        },
+      },
+    },
+  };
+  const agent = createAgent({ tasks, client, turnTimeoutMs: 20 });
+  const answer = await agent.reply([{ role: "user", content: "新增任务" }]);
+  assert.match(answer, /超时/u);
+  assert.match(answer, /已保存/u);
+  assert.equal(tasks.list().length, 1);
+});
+
+test("取消：模型晚到的工具不能写入，日志只包含工具名和状态", async (t) => {
+  const tasks = await newStore(t);
+  const controller = new AbortController();
+  const trace: unknown[] = [];
+  const client: ChatClient = {
+    chat: {
+      completions: {
+        async create() {
+          controller.abort();
+          return {
+            choices: [
+              {
+                index: 0,
+                message: toolCall("add", "add_tasks", '{"titles":["私人内容"]}'),
+                finish_reason: "tool_calls",
+              },
+            ],
+          };
+        },
+      },
+    },
+  };
+  const agent = createAgent({ tasks, client, onTrace: (event) => trace.push(event) });
+  const answer = await agent.reply([{ role: "user", content: "私人内容" }], {
+    signal: controller.signal,
+  });
+  assert.match(answer, /停止|取消/u);
+  assert.deepEqual(tasks.list(), []);
+  assert.ok(trace.length > 0);
+  assert.ok(!JSON.stringify(trace).includes("私人内容"));
+});
+
+test("最新清单：模型沿用历史直接回答时要求重新查询工具", async (t) => {
+  const tasks = await newStore(t);
+  tasks.create("刚加入的新任务");
+  const client = scriptedClient(
+    [finalText("只有旧任务"), toolCall("fresh", "list_tasks", "{}"), finalText("刚加入的新任务")],
+    tasks,
+  );
+  const answer = await createAgent({ tasks, client }).reply([
+    { role: "user", content: "只列出明天到期的未完成任务" },
+  ]);
+  assert.match(answer, /刚加入的新任务/u);
+});
+
+test("长历史：限制模型上下文并保留最新用户请求", async (t) => {
+  const tasks = await newStore(t);
+  let captured: unknown;
+  const client: ChatClient = {
+    chat: {
+      completions: {
+        async create(params) {
+          captured = params?.messages;
+          return { choices: [{ index: 0, message: finalText("你好"), finish_reason: "stop" }] };
+        },
+      },
+    },
+  };
+  const messages: ChatMessage[] = Array.from({ length: 90 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: "旧内容".repeat(100),
+  }));
+  messages.push({ role: "user", content: "最后一句你好" });
+  await createAgent({ tasks, client }).reply(messages);
+  assert.ok(JSON.stringify(captured).length < 20_000);
+  assert.ok(JSON.stringify(captured).includes("最后一句你好"));
+});
+
+test("预先取消的确认请求不能执行删除", async (t) => {
+  const tasks = await newStore(t);
+  const parent = tasks.create("父任务");
+  tasks.create("子任务", { parentId: parent.id });
+  const client = scriptedClient(
+    [
+      toolCall("prepare", "prepare_deletion", JSON.stringify({ ids: [parent.id] })),
+      finalText("已准备"),
+    ],
+    tasks,
+  );
+  const agent = createAgent({ tasks, client });
+  const prompt = await agent.reply([{ role: "user", content: "删除父任务" }]);
+  const code = prompt.match(/确认删除 ([a-f0-9-]{36})/u)![1];
+  const controller = new AbortController();
+  controller.abort();
+  const answer = await agent.reply([{ role: "user", content: "确认删除 " + code }], {
+    signal: controller.signal,
+  });
+  assert.match(answer, /停止/u);
+  assert.equal(tasks.list().length, 2);
+});

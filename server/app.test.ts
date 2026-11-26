@@ -130,3 +130,71 @@ test("聊天 API 只将有效的完整对话传给智能体，并返回其回复
   assert.equal(invalid.status, 400);
   assert.deepEqual(conversations, [messages]);
 });
+
+test("请求防重：并发重试只执行一次，同ID不同内容拒绝，完成回执可读取", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "todo-receipts-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const tasks = createJsonTaskStore(join(directory, "tasks.json"));
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const app = createApp({
+    tasks,
+    requestFile: join(directory, "requests.json"),
+    async reply() {
+      tasks.create("只创建一次");
+      await gate;
+      return "已记下";
+    },
+  });
+  const server = app.listen(0, "127.0.0.1");
+  t.after(() => server[Symbol.asyncDispose]());
+  await once(server, "listening");
+  const url = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  const body = { requestId, messages: [{ role: "user", content: "帮我新增" }] };
+  const send = (payload: unknown) =>
+    fetch(url + "/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  const one = send(body);
+  const two = send(body);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  release();
+  assert.equal((await one).status, 200);
+  assert.equal((await two).status, 200);
+  assert.equal(tasks.list().length, 1);
+  assert.equal(
+    (await send({ ...body, messages: [{ role: "user", content: "其他任务" }] })).status,
+    409,
+  );
+  assert.equal((await fetch(url + "/api/chat/" + requestId)).status, 200);
+  await send(body);
+  assert.equal(tasks.list().length, 1);
+});
+
+test("恢复接口：回收站恢复与导入预览保留现有任务", async (t) => {
+  const { request } = await startTestApp(t);
+  const created = await request("POST", "/api/tasks", { title: "恢复任务" });
+  await request("DELETE", "/api/tasks/" + created.body.id);
+  const trash = await request("GET", "/api/tasks/trash");
+  assert.equal(trash.status, 200);
+  assert.equal(
+    (await request("POST", "/api/tasks/trash/" + trash.body[0].id + "/restore")).status,
+    200,
+  );
+  const exported = await request("GET", "/api/tasks/export");
+  assert.equal(exported.body.tasks.length, 1);
+  const input = { tasks: [{ id: "new-import", title: "新增导入", done: false }] };
+  const preview = await request("POST", "/api/tasks/import/preview", input);
+  assert.equal(preview.body.added, 1);
+  assert.equal((await request("GET", "/api/tasks")).body.length, 1);
+  assert.equal(
+    (await request("POST", "/api/tasks/import", { ...input, token: preview.body.token })).status,
+    200,
+  );
+  assert.equal((await request("GET", "/api/tasks/view?limit=1")).body.total, 2);
+});

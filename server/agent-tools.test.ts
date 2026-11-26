@@ -280,3 +280,19 @@ test("批量删除工具验证全部 id 后去重登记，错误参数不能登�
   );
   assert.equal(store.list().length, 2);
 });
+
+test("长清单：默认限量、分页稳定并支持标题检索，摘要不泄漏整库", async (t) => {
+  const store = await newStore(t);
+  for (let i = 0; i < 65; i += 1) store.create("分页任务" + String(i).padStart(2, "0"));
+  const first = JSON.parse(executeTool("list_tasks", "{}", store));
+  assert.equal(first.tasks.length, 30);
+  assert.equal(first.total, 65);
+  assert.equal(first.nextOffset, 30);
+  const second = JSON.parse(executeTool("list_tasks", '{"offset":30}', store));
+  assert.equal(second.tasks.length, 30);
+  assert.notEqual(first.tasks[0].id, second.tasks[0].id);
+  assert.ok(!first.summary.includes("分页任务64"));
+  const found = JSON.parse(executeTool("list_tasks", '{"search":"任务64"}', store));
+  assert.equal(found.total, 1);
+  assert.equal(found.tasks[0].title, "分页任务64");
+});

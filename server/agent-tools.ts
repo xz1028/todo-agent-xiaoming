@@ -14,6 +14,21 @@ export const AGENT_TOOLS = [
       parameters: {
         type: "object",
         properties: {
+          search: {
+            type: "string",
+            description: "按标题子串查询；定位任务时用关键词检索所有匹配项",
+          },
+          offset: {
+            type: "integer",
+            minimum: 0,
+            description: "分页起点，默认0；有nextOffset时需继续查询，不能把一页当全部",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            description: "每页数量，默认30，最多50",
+          },
           priority: {
             type: "string",
             enum: ["high", "medium", "low"],
@@ -148,6 +163,8 @@ interface ScriptResult {
   task?: Task;
   summary?: string;
   deletionIds?: string[];
+  total?: number;
+  nextOffset?: number;
 }
 
 const error = (message: string): string =>
@@ -235,7 +252,13 @@ function executeValidatedTool(
   }
   if (!isObject(raw)) return error("工具参数必须是一个对象。");
 
-  const summary = () => summaryOf(store.list(), now);
+  const summary = () => {
+    const all = store.list();
+    return (
+      summaryOf(all.slice(0, 30), now, all) +
+      (all.length > 30 ? "\n仅展示前30项，请分页查询余下任务。" : "")
+    );
+  };
 
   switch (name) {
     case "list_tasks": {
@@ -245,12 +268,34 @@ function executeValidatedTool(
           "查询条件无效，请检查状态、日期范围、优先级、工作量和排序；period不能与明确日期范围并用，effort/workload值须相同。",
         );
       const allTasks = store.list();
-      const tasks = queryTasks(allTasks, query.data, now);
-      return success({ tasks, summary: summaryOf(tasks, now, allTasks, query.data.sort) });
+      const selected = queryTasks(allTasks, query.data, now);
+      const offset = query.data.offset ?? 0;
+      const end = offset + (query.data.limit ?? 30);
+      const tasks = selected
+        .slice(offset, end)
+        .map(({ id, title, done, dueDate, priority, workload, parentId }) => ({
+          id,
+          title,
+          done,
+          dueDate,
+          priority,
+          workload,
+          parentId,
+        }));
+      return success({
+        tasks,
+        total: selected.length,
+        ...(end < selected.length ? { nextOffset: end } : {}),
+        summary:
+          summaryOf(tasks, now, allTasks, query.data.sort) +
+          (selected.length > tasks.length
+            ? "\n本页 " + tasks.length + " 项，匹配共 " + selected.length + " 项，请继续分页。"
+            : ""),
+      });
     }
 
     case "add_tasks": {
-      if (!Array.isArray(raw.titles) || raw.titles.length === 0) {
+      if (!Array.isArray(raw.titles) || raw.titles.length === 0 || raw.titles.length > 50) {
         return error("请提供至少一条任务标题（titles 数组）。");
       }
       const titles: string[] = [];

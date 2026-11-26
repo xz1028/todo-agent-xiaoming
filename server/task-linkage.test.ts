@@ -102,7 +102,7 @@ test("联动写入保留旧自定义字段，历史循环状态处理能结束",
   );
   store.update("a", { done: true });
   assert.ok(store.list().every((task) => task.done));
-  assert.equal(JSON.parse(await readFile(filename, "utf8"))[0].custom, "保留");
+  assert.equal(JSON.parse(await readFile(filename, "utf8")).tasks[0].custom, "保留");
 });
 
 test("HTTP 与聊天工具共享继承和完成联动，状态变化让旧删除确认失效", async (t) => {

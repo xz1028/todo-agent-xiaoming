@@ -48,10 +48,20 @@ export function createDeletionConfirmation(tasks: TaskStore, now: () => Date, fi
 
   function deleted(ids: string[]): string {
     const count = tasks.removeMany(ids);
-    return `已删除 ${count} 项任务。\n${summaryOf(tasks.list(), now)}`;
+    const all = tasks.list();
+    return (
+      `已删除 ${count} 项任务，可在回收站恢复。\n${summaryOf(all.slice(0, 30), now, all)}` +
+      (all.length > 30 ? "\n仅展示前30项，完整清单请查看任务面板。" : "")
+    );
   }
 
   return {
+    peek() {
+      const pending = read();
+      if (!pending || now().getTime() >= pending.expiresAt) return null;
+      if (JSON.stringify(affected(pending.ids)) !== JSON.stringify(pending.snapshot)) return null;
+      return { code: pending.code, expiresAt: pending.expiresAt, tasks: pending.snapshot };
+    },
     /** 工具循环完成后统一提交，避免多个单条工具调用绕过批量确认。 */
     finish(ids: string[]): string {
       const unique = [...new Set(ids)];
@@ -67,7 +77,8 @@ export function createDeletionConfirmation(tasks: TaskStore, now: () => Date, fi
       save({ code, ids: unique, snapshot, expiresAt: now().getTime() + 5 * 60_000 });
       return [
         `即将删除以下 ${snapshot.length} 项任务（包含关联子任务），尚未执行：`,
-        summaryOf(snapshot, now, tasks.list()),
+        summaryOf(snapshot.slice(0, 30), now, tasks.list()),
+        ...(snapshot.length > 30 ? ["仅列出前30项，确认前请在任务面板展开全部删除目标。"] : []),
         `请在 5 分钟内回复：确认删除 ${code}`,
         `如需取消，回复：取消删除 ${code}`,
         "新的删除请求会替换这次待确认操作。",

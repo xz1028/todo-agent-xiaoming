@@ -6,6 +6,9 @@ import { todayISO } from "./task-view.ts";
 export const periods = ["today", "tomorrow", "this_week", "next_week", "this_month"] as const;
 export const taskQuerySchema = z
   .object({
+    search: z.string().trim().min(1).max(200).optional(),
+    offset: z.number().int().min(0).max(1_000_000).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
     filter: z.enum(["all", "pending", "done"]).optional(),
     dueToday: z.boolean().optional(),
     overdue: z.boolean().optional(),
@@ -43,6 +46,8 @@ export function queryTasks(tasks: Task[], query: TaskQuery, now: () => Date): Ta
   const today = todayISO(now);
   const [from, to] = query.period ? dateRange(query.period, today) : [query.dueFrom, query.dueTo];
   const selected = tasks.filter((task) => {
+    if (query.search && !task.title.toLocaleLowerCase().includes(query.search.toLocaleLowerCase()))
+      return false;
     if (query.priority && (task.priority ?? "medium") !== query.priority) return false;
     const effort = query.effort ?? query.workload;
     if (effort && (task.workload ?? "medium") !== effort) return false;

@@ -8,7 +8,7 @@
 - `server/agent-tools.ts`：5 个模型工具（`list_tasks` / `add_tasks` / `complete_task` / `update_task` / `prepare_deletion`）与执行器；后端保留旧删除工具名作为兼容别名。参数错误返回结构化 JSON。
 - `server/deletion-confirmation.ts`：汇总删除后的确认记录、一次性确认码、5 分钟有效期、取消与任务快照校验；`server/index.ts` 将其接入 `data/pending-deletion.json`。测试不传 `confirmationFile` 时使用实例内存，不写项目数据。
 - `server/index.ts`：用依赖注入组装 `createAgent` 与 `createApp`。
-- agent 单轮最多 6 次工具迭代，每次模型请求使用 SDK 请求选项 `signal: AbortSignal.timeout(20_000)` 和 `maxRetries: 0`。20 秒是单次模型调用的期限，工具循环可能包含多次调用；无 key、网络错误、超时或模型异常时返回中文兜底文案，不产生 500。
+- agent 单轮最多 6 次工具迭代，每次模型请求使用 SDK 请求选项 `signal: AbortSignal.timeout(20_000)` 和 `maxRetries: 0`。整轮另设45秒截止并支持取消；SDK外还以signal竞速防悬挂，失败回复包含已保存操作；无 key、网络错误、超时或模型异常时返回中文兜底文案，不产生 500。
 - 模型请求显式关闭思考模式，避免 DeepSeek 默认思考模式要求的 `reasoning_content` 历史回填；工具循环只处理当前声明的消息字段。
 - 日期输入通过 zod 校验有效日历日期；`dueToday` 和 `overdue` 同时启用时取并集，仅包括未完成任务。
 
@@ -30,7 +30,7 @@ npm run dev                 # http://127.0.0.1:3000
 
 | 检查                       | 结果                                                                      |
 | -------------------------- | ------------------------------------------------------------------------- |
-| 当前源码的离线测试         | 91 项通过；包含修复与本轮扩展回归                                         |
+| 当前源码的离线测试         | 108 项通过；包含修复与本轮扩展回归                                        |
 | 类型、lint、格式与前端构建 | 全部通过；类型检查包括验收脚本                                            |
 | 干净源码副本的安装与检查   | `npm ci` 成功；最终源码的离线测试与全部质量检查通过                       |
 | 独立只读代码审查           | 已修复发现的空白 `BASE_URL` 问题，无遗留重要问题                          |
@@ -62,6 +62,7 @@ npm test && npm run typecheck && npm run lint && npm run fmt:check && npm run bu
 npm run acceptance
 # 包含可选扩展场景
 npm run acceptance -- --extended
+npm run acceptance -- --extended --regression
 ```
 
 默认自动启动生产服务入口，使用随机端口和临时数据目录，累积 `messages` 跑完六步并断言每一步真实状态与清单展示，然后停止、重启进程验证持久化。正常完成或断言失败时清理临时进程和数据，不操作仓库中的 `data/`。请求失败、兜底或断言不符时非零退出。
@@ -96,4 +97,14 @@ npm run acceptance -- --extended
 - task-view.ts 负责三组、缩进、跨组父名与全清单孩子进度；task-query.ts 负责上海日历区间和筛选；task-order.ts 稳定排序。
 - 新增明天/本周/下周/本月范围与日期边界、状态/优先级/工作量交集，排序可切换。
 - 子创建时继承父日期，显式覆盖；存储层原子执行父子完成联动，撤销子任务会撤销父完成，撤销父任务不改孩子。新增/移动/删除孩子会重算非空父任务。
-- 本轮离线测试覆盖周日与周一跨界、闰年月底、跨年、组合筛选、稳定排序、过滤下完整进度、继承与联动、重启与确认失效。新表达的真实模型验收本轮未重跑。
+- 本轮离线测试覆盖周日与周一跨界、闰年月底、跨年、组合筛选、稳定排序、过滤下完整进度、继承与联动、重启与确认失效。新表达已通过2026-11-26真实DeepSeek扩展+回归验收。
+
+## 会话、回执与恢复
+
+- shared/chat-history.ts 是无运行时依赖的历史裁剪；src/session.ts 校验版本化浏览器存储，保存最近100条消息与冻结的请求编号/消息。刷新只读取旧请求回执，不自动重发。
+- server/chat-requests.ts 在调用agent前持久化running，终态落盘后返回；并发同ID共享Promise，内容冲突409。重启遗留请求标记interrupted，拒绝自动重放；终态回执保留500条。单进程同时仅接受一个不同ID的聊天请求。
+- server/task-store.ts 兼容旧数组，首次写入迁移为{version:1,tasks,trash}，.bak保存上一文件。删除和回收记录同次提交，恢复不覆盖ID。导入仅合并、预览哈希防止清单变化后误提交。
+- TaskPanel.tsx 从真实API读取卡片、分组、完整父子进度和服务端删除预览；完成复选框使用既有PATCH，确认/取消走聊天执行端；支持搜索、分页、回收恢复、JSON导入导出。保留pre-wrap。
+- agent.trace仅包含请求编号、事件类型、工具名、状态、耗时；不会记录提示词、标题、参数或凭据。不要把控制台事件当成完整会话存档。
+- 浏览器实测为隔离受控模型；真实模型回归使用隔离真实服务。取消不会回滚已提交写入；请求防重也不提供整轮事务回滚或多进程锁。
+- 本轮尚未push，新的GitHub Actions结果须在获准推送后检查。
