@@ -32,6 +32,26 @@ export default function App() {
   const conversation = activeConversation(history);
   const session = conversation.session;
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [compactHistory, setCompactHistory] = useState(
+    () => window.matchMedia("(max-width: 1100px)").matches,
+  );
+  const historyButton = useRef<HTMLButtonElement>(null);
+  const historyVisible = compactHistory ? historyOpen : !sidebarCollapsed;
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1100px)");
+    const update = () => {
+      setCompactHistory(media.matches);
+      setHistoryOpen(false);
+    };
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  function closeHistory() {
+    if (compactHistory) setHistoryOpen(false);
+    else setSidebarCollapsed(true);
+    historyButton.current?.focus();
+  }
   const [draft, setDraft] = useState("");
   const drafts = useRef(new Map<string, string>());
   const [pending, setPending] = useState(false);
@@ -81,6 +101,7 @@ export default function App() {
       if (close) {
         setHistoryOpen(false);
         setTab("chat");
+        requestAnimationFrame(() => input.current?.focus());
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法更新会话。");
@@ -152,8 +173,18 @@ export default function App() {
         <span>小明智能体</span>
         <div className="header-actions">
           <ThemeSelector />
-          <button className="quiet" onClick={() => setHistoryOpen(true)}>
-            历史对话
+          <button
+            ref={historyButton}
+            className="quiet"
+            aria-label={historyVisible ? "收起历史对话" : "展开历史对话"}
+            aria-expanded={historyVisible}
+            aria-controls="conversation-history"
+            onClick={() => {
+              if (compactHistory) setHistoryOpen((value) => !value);
+              else setSidebarCollapsed((value) => !value);
+            }}
+          >
+            {historyVisible ? "收起历史" : "历史对话"}
           </button>
           <button
             className="quiet"
@@ -172,20 +203,21 @@ export default function App() {
           任务清单
         </button>
       </nav>
-      <ConversationList
-        open={historyOpen}
-        history={history}
-        disabled={pending || !!session.request}
-        onClose={() => setHistoryOpen(false)}
-        onNew={() => changeConversation(newConversation)}
-        onSelect={(id) => changeConversation((value) => switchConversation(value, id))}
-        onRename={(id, title) =>
-          changeConversation((value) => renameConversation(value, id, title), false)
-        }
-        onDelete={(id) => changeConversation((value) => deleteConversation(value, id), false)}
-        onRestore={(id) => changeConversation((value) => restoreConversation(value, id))}
-      />
-      <div className="workspace">
+      <div className={"workspace" + (!compactHistory && historyVisible ? " with-history" : "")}>
+        <ConversationList
+          open={historyVisible}
+          compact={compactHistory}
+          history={history}
+          disabled={pending || !!session.request}
+          onClose={closeHistory}
+          onNew={() => changeConversation(newConversation)}
+          onSelect={(id) => changeConversation((value) => switchConversation(value, id))}
+          onRename={(id, title) =>
+            changeConversation((value) => renameConversation(value, id, title), false)
+          }
+          onDelete={(id) => changeConversation((value) => deleteConversation(value, id), false)}
+          onRestore={(id) => changeConversation((value) => restoreConversation(value, id))}
+        />
         <main className={tab === "chat" ? "chat-pane active" : "chat-pane"}>
           <div className="conversation-heading">
             <h2>{conversation.title}</h2>
